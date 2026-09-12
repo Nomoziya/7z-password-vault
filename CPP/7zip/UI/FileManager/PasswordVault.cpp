@@ -29,21 +29,50 @@ static const unsigned kTagSize = 16;
 static const unsigned kKeySize = 32;
 static const UInt32 kPbkdf2Iterations = 200000;
 
+/* Sanity limits used when reading the vault file. They protect against a
+   corrupted / malicious file that claims huge sizes and would make us
+   allocate gigabytes or spin for hours in the key derivation. */
+static const UInt32 kMaxNameBytes = 1 << 16;      /* 64 KB */
+static const UInt32 kMaxBlobSize  = 1 << 20;      /* 1 MB  */
+static const UInt32 kMaxCipherSize = 1 << 24;     /* 16 MB */
+static const UInt32 kMinIterations = 1000;
+static const UInt32 kMaxIterations = 10000000;
+static const UInt32 kMaxEntries = 100000;
+
 // ---------------------------------------------------------------------------
 // master password session cache
 
 static UString g_MasterPassword;
 static bool g_HaveMasterPassword = false;
 
+/* Best-effort overwrite of a memory buffer. The compiler is not allowed to
+   optimize this away (volatile pointer). */
+static void SecureWipe(void *data, size_t size)
+{
+  if (!data || size == 0)
+    return;
+  volatile Byte *p = (volatile Byte *)data;
+  while (size-- != 0)
+    *p++ = 0;
+}
+
+static void SecureWipeString(UString &s)
+{
+  if (!s.IsEmpty())
+    SecureWipe(s.Ptr_non_const(), (size_t)s.Len() * sizeof(wchar_t));
+  s.Empty();
+}
+
 void CPasswordVault::SetCachedMasterPassword(const UString &password)
 {
+  SecureWipeString(g_MasterPassword);
   g_MasterPassword = password;
   g_HaveMasterPassword = true;
 }
 
 void CPasswordVault::ClearCachedMasterPassword()
 {
-  g_MasterPassword.Empty();
+  SecureWipeString(g_MasterPassword);
   g_HaveMasterPassword = false;
 }
 
@@ -343,31 +372,52 @@ bool CPasswordVault::Save(UString &errorMessage)
 {
   EnsureFolderExists(_path);
 
-  COutFile f;
-  if (!f.Create_ALWAYS(_path))
+  /* Write to a temporary file first, then replace the real file atomically.
+     Otherwise a crash / power loss in the middle of a write would destroy
+     the whole vault (all saved passwords). */
+  const UString tmpPath = _path + L".tmp";
+
   {
-    errorMessage = L"Cannot create vault file";
+    COutFile f;
+    if (!f.Create_ALWAYS(tmpPath))
+    {
+      errorMessage = L"Cannot create vault file";
+      return false;
+    }
+
+    bool ok = WriteBuf(f, kMagic, 4) && WriteBuf(f, &kVersion, 1);
+
+    if (ok)
+    {
+      NPasswordVault::CInfo settings;
+      settings.Load();
+      const bool useMaster = settings.UseMasterPassword;
+      const Byte flags = useMaster ? 1 : 0;
+      ok = WriteBuf(f, &flags, 1);
+      if (ok)
+        ok = useMaster ? Save_Master(f, errorMessage) : Save_DPAPI(f, errorMessage);
+    }
+
+    if (!ok && errorMessage.IsEmpty())
+      errorMessage = L"Cannot write vault file";
+
+    f.Close();
+
+    if (!ok)
+    {
+      ::DeleteFileW(tmpPath);
+      return false;
+    }
+  }
+
+  if (!::MoveFileExW(tmpPath, _path, MOVEFILE_REPLACE_EXISTING))
+  {
+    errorMessage = L"Cannot replace vault file";
+    ::DeleteFileW(tmpPath);
     return false;
   }
 
-  if (!WriteBuf(f, kMagic, 4) || !WriteBuf(f, &kVersion, 1))
-  {
-    errorMessage = L"Cannot write vault file";
-    return false;
-  }
-
-  NPasswordVault::CInfo settings;
-  settings.Load();
-  const bool useMaster = settings.UseMasterPassword;
-
-  const Byte flags = useMaster ? 1 : 0;
-  if (!WriteBuf(f, &flags, 1))
-  {
-    errorMessage = L"Cannot write vault file";
-    return false;
-  }
-
-  return useMaster ? Save_Master(f, errorMessage) : Save_DPAPI(f, errorMessage);
+  return true;
 }
 
 void CPasswordVault::SerializeEntries(CByteBuffer &out)
@@ -447,7 +497,7 @@ bool CPasswordVault::ParseEntries(const Byte *data, size_t size, UString &errorM
 bool CPasswordVault::Load_DPAPI(CInFile &f, UString &errorMessage)
 {
   UInt32 count = 0;
-  if (!ReadUInt32(f, count))
+  if (!ReadUInt32(f, count) || count > kMaxEntries)
   {
     errorMessage = L"Invalid vault file";
     return false;
@@ -458,7 +508,7 @@ bool CPasswordVault::Load_DPAPI(CInFile &f, UString &errorMessage)
     CPasswordVaultEntry entry;
 
     UInt32 nameBytes = 0;
-    if (!ReadUInt32(f, nameBytes) || (nameBytes & 1) != 0)
+    if (!ReadUInt32(f, nameBytes) || (nameBytes & 1) != 0 || nameBytes > kMaxNameBytes)
     {
       errorMessage = L"Invalid vault entry";
       return false;
@@ -479,7 +529,7 @@ bool CPasswordVault::Load_DPAPI(CInFile &f, UString &errorMessage)
     }
 
     UInt32 blobSize = 0;
-    if (!ReadUInt32(f, blobSize))
+    if (!ReadUInt32(f, blobSize) || blobSize > kMaxBlobSize)
     {
       errorMessage = L"Invalid vault entry";
       return false;
@@ -526,7 +576,9 @@ bool CPasswordVault::Load_Master(HWND parent, CInFile &f, UString &errorMessage)
   UInt32 cipherLen = 0;
 
   if (!ReadBuf(f, salt, kSaltSize) || !ReadUInt32(f, iterations) ||
-      !ReadBuf(f, iv, kIvSize) || !ReadBuf(f, tag, kTagSize) || !ReadUInt32(f, cipherLen))
+      !ReadBuf(f, iv, kIvSize) || !ReadBuf(f, tag, kTagSize) || !ReadUInt32(f, cipherLen) ||
+      iterations < kMinIterations || iterations > kMaxIterations ||
+      cipherLen > kMaxCipherSize)
   {
     errorMessage = L"Invalid vault file";
     return false;
@@ -546,13 +598,17 @@ bool CPasswordVault::Load_Master(HWND parent, CInFile &f, UString &errorMessage)
   Byte key[kKeySize];
   if (!DeriveKey(master, salt, kSaltSize, iterations, key))
   {
+    SecureWipeString(master);
     errorMessage = L"Key derivation failed";
     return false;
   }
 
   CByteBuffer plain(cipherLen);
-  if (!AesGcm(false, key, iv, kIvSize,
-      (const Byte *)cipher, cipherLen, (Byte *)plain, tag, kTagSize))
+  const bool decOk = AesGcm(false, key, iv, kIvSize,
+      (const Byte *)cipher, cipherLen, (Byte *)plain, tag, kTagSize);
+  SecureWipe(key, sizeof(key));
+  SecureWipeString(master);
+  if (!decOk)
   {
     errorMessage = L"Wrong master password or corrupted vault file";
     return false;
@@ -625,17 +681,22 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage)
   Byte key[kKeySize];
   if (!DeriveKey(master, salt, kSaltSize, kPbkdf2Iterations, key))
   {
+    SecureWipeString(master);
     errorMessage = L"Key derivation failed";
     return false;
   }
+  SecureWipeString(master);
 
   CByteBuffer plain;
   SerializeEntries(plain);
 
   CByteBuffer cipher(plain.Size());
   Byte tag[kTagSize];
-  if (!AesGcm(true, key, iv, kIvSize,
-      (const Byte *)plain, (unsigned)plain.Size(), (Byte *)cipher, tag, kTagSize))
+  const bool encOk = AesGcm(true, key, iv, kIvSize,
+      (const Byte *)plain, (unsigned)plain.Size(), (Byte *)cipher, tag, kTagSize);
+  SecureWipe(key, sizeof(key));
+  plain.Wipe();
+  if (!encOk)
   {
     errorMessage = L"Encryption failed";
     return false;

@@ -74,22 +74,65 @@ void CPasswordPage::OnBrowse()
 
 void CPasswordPage::OnSetMasterPassword()
 {
-  UString pw1, pw2, error;
+  UString error;
 
+  UString pathU;
+  _vaultPathEdit.GetText(pathU);
+  pathU.Trim();
+  const UString vaultPath = pathU.IsEmpty() ? CPasswordVault::GetDefaultPath() : pathU;
+
+  /* Load the existing vault FIRST. If it is already encrypted with a master
+     password, this asks for the OLD password (or uses the cached one).
+     Doing this before replacing the cached password is essential: otherwise
+     the NEW password would be used to decrypt the OLD file and fail. */
+  CPasswordVault vault;
+  vault.SetPath(vaultPath);
+  if (!vault.Load(*this, error))
+  {
+    if (!error.IsEmpty())
+      ::MessageBoxW(*this, error, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
+    return;
+  }
+
+  UString pw1, pw2;
   if (!CPasswordVault::PromptForMasterPassword(*this, pw1, error))
     return;
   if (!CPasswordVault::PromptForMasterPassword(*this, pw2, error))
     return;
 
+  if (pw1.IsEmpty())
+  {
+    ::MessageBoxW(*this, L"主密码不能为空。", L"7-Zip 密码管家", MB_ICONWARNING | MB_OK);
+    return;
+  }
   if (pw1 != pw2)
   {
     ::MessageBoxW(*this, L"两次输入的密码不一致。", L"7-Zip 密码管家", MB_ICONWARNING | MB_OK);
     return;
   }
 
+  // Switch to master-password mode, then re-encrypt the vault with the new password.
+  {
+    NPasswordVault::CInfo settings;
+    settings.Load();
+    settings.UseMasterPassword = true;
+    settings.VaultPath = us2fs(vaultPath);
+    settings.Save();
+  }
+
   CPasswordVault::SetCachedMasterPassword(pw1);
+
+  if (!vault.Save(error))
+  {
+    ::MessageBoxW(*this, error, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
+    return;
+  }
+
   CheckButton(IDX_PASSWORD_USE_MASTER, true);
-  ModifiedEvent();
+  _oldUseMaster = true;
+  _oldVaultPath = us2fs(vaultPath);
+  _needSave = true;
+  Changed();
 }
 
 bool CPasswordPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)

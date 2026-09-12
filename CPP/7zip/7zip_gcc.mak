@@ -169,7 +169,7 @@ endif
 
 
 
-CFLAGS = $(MY_ARCH_2) $(LOCAL_FLAGS) $(CFLAGS_BASE2) $(CFLAGS_BASE) $(FLAGS_FLTO) $(CC_SHARED) -o $@
+CFLAGS = $(MY_ARCH_2) $(LOCAL_FLAGS) $(CFLAGS_BASE2) $(CFLAGS_BASE) $(FLAGS_FLTO) $(CC_SHARED) -MMD -MP -o $@
 
 
 ifdef IS_MINGW
@@ -210,7 +210,7 @@ CXX_WARN_FLAGS =
 #-Wno-invalid-offsetof
 #-Wno-reorder
 
-CXXFLAGS = $(MY_ARCH_2) $(LOCAL_FLAGS) $(CXXFLAGS_BASE2) $(CFLAGS_BASE) $(FLAGS_FLTO) $(CXXFLAGS_EXTRA) $(CC_SHARED) $(CXX_WARN_FLAGS) $(CXX_STD_FLAGS) $(CXX_INCLUDE_FLAGS) -o $@
+CXXFLAGS = $(MY_ARCH_2) $(LOCAL_FLAGS) $(CXXFLAGS_BASE2) $(CFLAGS_BASE) $(FLAGS_FLTO) $(CXXFLAGS_EXTRA) $(CC_SHARED) $(CXX_WARN_FLAGS) $(CXX_STD_FLAGS) $(CXX_INCLUDE_FLAGS) -MMD -MP -o $@
 
 STATIC_TARGET=
 ifdef COMPL_STATIC
@@ -1368,6 +1368,12 @@ predef_cxx:
 	$(CXX) $(CFLAGS) -E $(SHOW_PREDEF) ../../../Common/CrcReg.cpp  > predef_cxx_log
 
 predef: predef_cc predef_cxx
+
+
+# Header dependency tracking: -MMD generates <obj>.d files next to each object.
+# Without this, changing a header does not rebuild the .cpp files that include it,
+# which causes silent ABI/layout mismatches (crashes) between object files.
+-include $(OBJS:.o=.d)
 
 
 clean:

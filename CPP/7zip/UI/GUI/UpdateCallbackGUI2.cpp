@@ -5,6 +5,8 @@
 #include "../FileManager/LangUtils.h"
 #include "../FileManager/PasswordDialog.h"
 
+#include "../Common/ZipRegistry.h"
+
 #include "resource2.h"
 #include "resource3.h"
 #include "ExtractRes.h"
@@ -52,11 +54,17 @@ HRESULT CUpdateCallbackGUI2::SetOperation_Base(UInt32 notifyOp, const wchar_t *n
 HRESULT CUpdateCallbackGUI2::ShowAskPasswordDialog()
 {
   CPasswordDialog dialog;
+  /* Honour the "show password by default" setting, and remember the user's
+     choice, exactly like the File Manager paths do. */
+  const bool showPassword = NExtract::Read_ShowPassword();
+  dialog.ShowPassword = showPassword;
   ProgressDialog->WaitCreating();
   if (dialog.Create(*ProgressDialog) != IDOK)
     return E_ABORT;
   Password = dialog.Password;
   PasswordIsDefined = true;
+  if (dialog.ShowPassword != showPassword)
+    NExtract::Save_ShowPassword(dialog.ShowPassword);
   return S_OK;
 }
 

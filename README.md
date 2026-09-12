@@ -105,10 +105,31 @@ MSVC（nmake）：使用 `GUI\makefile` 与 `FileManager\makefile`（已链接 `
 | `CPP/7zip/UI/FileManager/PasswordPage.h` / `.cpp` / `.rc` / `PasswordPageRes.h` | 新增：密码管理设置页 |
 | `CPP/7zip/UI/FileManager/OptionsDialog.cpp` | 修改：注册密码管理设置页 |
 | `CPP/7zip/UI/Common/ZipRegistry.h` / `.cpp` | 修改：新增密码库设置读写 |
+| `CPP/7zip/UI/GUI/UpdateCallbackGUI2.cpp` | 修改：右键解压路径也遵循「默认显示密码」 |
 | `CPP/7zip/UI/GUI/makefile` / `makefile.gcc` | 修改：GUI 构建文件（链接 bcrypt） |
 | `CPP/7zip/UI/FileManager/FM.mak` / `makefile.gcc` | 修改：FM 构建文件（链接 bcrypt） |
-| `CPP/7zip/7zip_gcc.mak` | 修改：新增 PasswordVault/PasswordPage 编译规则 |
+| `CPP/7zip/7zip_gcc.mak` | 修改：新增编译规则、链接 bcrypt、**头文件依赖跟踪（-MMD -MP）** |
 | `Lang/en.ttt` / `zh-cn.txt` / `zh-tw.txt` | 修改：新增界面字符串本地化 |
+
+### 开发注意（重要）
+
+7-Zip 自带的 GCC makefile **不跟踪头文件依赖**。修改任何 `.h` 后如果只做增量编译，
+包含该头文件的其他 `.cpp` 不会重新编译，会造成**类布局不一致**（不同目标文件对同一成员的
+偏移量理解不同），从而出现内存踩踏 / 崩溃。
+
+本仓库已在 `7zip_gcc.mak` 中加入 `-MMD -MP` 与 `-include $(OBJS:.o=.d)` 自动跟踪头文件依赖。
+若在旧版构建脚本上开发，**改过头文件后请务必全量重编**：
+
+```bat
+del /q CPP\7zip\UI\GUI\b\g\*.o CPP\7zip\UI\FileManager\b\g\*.o
+make -f ../../cmpl_gcc.mak
+```
+
+### 健壮性设计
+
+- 密码库采用**临时文件 + 原子替换**写入，写入过程中崩溃/断电不会损坏已有密码库。
+- 读取时会校验条数、名称长度、密文长度与 PBKDF2 迭代次数，避免损坏文件导致巨额内存分配或长时间卡死。
+- 主密码、派生密钥、明文缓冲在使用后会被**主动清零**。
 
 ### 安全说明
 
