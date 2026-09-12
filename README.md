@@ -32,6 +32,8 @@ A modified build of **7-Zip 26.03** with an integrated, encrypted, named passwor
 > it, English falls back to the built-in resource strings and every string that only exists in the
 > language file — the vault message boxes, list hint, prompts — would show its Chinese fallback.
 
+![Saved passwords window](docs/saved-passwords-window.png)
+
 ### Saved-passwords window
 
 Open it with the **Saved passwords...** button in the password dialog. It stays open while you pick,
@@ -61,7 +63,7 @@ so you can compare several entries; the hint line shows which entry was filled.
 | Edit saved passwords with the right mouse button | Right click edits instead of double click |
 | Auto-fill the password when a saved name is typed | Turn off to be asked before filling |
 | Offer to save an unsaved password | Turn off to never be asked to store a new password |
-| Show the saved passwords in the list (otherwise dots) | Reveal the password column by default; the list window also has its own **Show passwords** checkbox |
+| Show saved passwords in the list | Reveal the password column by default; the list window also has its own **Show passwords** checkbox |
 | Export vault... / Import vault... | Copy the vault to/from another file |
 
 ### Build
@@ -153,6 +155,8 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 > （即 `en.ttt` 模板的副本，本仓库已提供）。缺少它时英文会退回内置资源字符串，而只存在于
 > 语言文件里的字符串（密码库消息框、列表提示、各种询问）会退回中文兜底文本。
 
+![已保存的密码窗口](docs/saved-passwords-window.png)
+
 ### 已保存的密码窗口
 
 在密码对话框里点「已保存的密码...」打开。窗口**不会因为填入而关闭**，方便对比多条记录；
@@ -182,7 +186,7 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 | 使用右键编辑已存密码（否则为双击） | 用右键代替双击来修改 |
 | 输入已保存的名称时自动填入密码 | 关闭后改为先询问再填入 |
 | 输入未保存的密码时提示保存 | 关闭后不再询问是否保存新密码 |
-| 在列表中显示已保存的密码（否则显示为圆点） | 默认在列表中显示明文；列表窗口里也有自己的「显示密码」复选框 |
+| 在列表中显示已保存的密码 | 默认在列表中显示明文；列表窗口里也有自己的「显示密码」复选框 |
 | 导出密码库... / 导入密码库... | 把密码库复制到 / 从其它文件导入 |
 
 ### 构建
