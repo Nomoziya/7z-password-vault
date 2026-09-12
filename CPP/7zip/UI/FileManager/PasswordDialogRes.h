@@ -1,0 +1,13 @@
+#define IDD_PASSWORD        3800
+#define IDT_PASSWORD_ENTER  3801
+#define IDX_PASSWORD_SHOW   3803
+
+#define IDE_PASSWORD_PASSWORD  120
+
+// password vault integration
+#define IDE_PASSWORD_SAVED     121
+#define IDT_PASSWORD_SAVED     3804
+#define IDB_PASSWORD_SAVE      3806
+#define IDB_PASSWORD_DELETE    3807
+#define IDD_PASSWORD_NAME      3810
+#define IDE_PASSWORD_NAME      3811

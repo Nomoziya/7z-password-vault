@@ -1,0 +1,220 @@
+PROG = 7zFM
+
+# IS_X64 = 1
+# USE_ASM = 1
+# ST_MODE = 1
+
+ifdef SystemDrive
+IS_MINGW = 1
+else
+ifdef SYSTEMDRIVE
+IS_MINGW = 1
+endif
+endif
+
+# -mwindows : GUI subsystem (WinMain entry point)
+# -lcrypt32  : DPAPI (password vault)
+# -lhtmlhelp : HtmlHelpW
+# -lmpr      : WNet* functions (Net.cpp)
+MY_LIBS = -mwindows -lcrypt32 -lhtmlhelp -lmpr
+
+LOCAL_FLAGS = \
+  -DZ7_LANG \
+  -DZ7_EXTERNAL_CODECS \
+  -DZ7_DEVICE_FILE \
+
+FM_OBJS = \
+  $O/App.o \
+  $O/BrowseDialog.o \
+  $O/BrowseDialog2.o \
+  $O/ClassDefs.o \
+  $O/EnumFormatEtc.o \
+  $O/ExtractCallback.o \
+  $O/FileFolderPluginOpen.o \
+  $O/FilePlugins.o \
+  $O/FM.o \
+  $O/FoldersPage.o \
+  $O/FormatUtils.o \
+  $O/FSFolder.o \
+  $O/FSFolderCopy.o \
+  $O/HelpUtils.o \
+  $O/LangUtils.o \
+  $O/MemDialog.o \
+  $O/MenuPage.o \
+  $O/MyLoadMenu.o \
+  $O/OpenCallback.o \
+  $O/OptionsDialog.o \
+  $O/Panel.o \
+  $O/PanelCopy.o \
+  $O/PanelCrc.o \
+  $O/PanelDrag.o \
+  $O/PanelFolderChange.o \
+  $O/PanelItemOpen.o \
+  $O/PanelItems.o \
+  $O/PanelKey.o \
+  $O/PanelListNotify.o \
+  $O/PanelMenu.o \
+  $O/PanelOperations.o \
+  $O/PanelSelect.o \
+  $O/PanelSort.o \
+  $O/PanelSplitFile.o \
+  $O/ProgramLocation.o \
+  $O/PropertyName.o \
+  $O/RegistryAssociations.o \
+  $O/RegistryUtils.o \
+  $O/RootFolder.o \
+  $O/SplitUtils.o \
+  $O/StringUtils.o \
+  $O/SysIconUtils.o \
+  $O/TextPairs.o \
+  $O/UpdateCallback100.o \
+  $O/ViewSettings.o \
+  $O/AboutDialog.o \
+  $O/ComboDialog.o \
+  $O/CopyDialog.o \
+  $O/EditDialog.o \
+  $O/EditPage.o \
+  $O/LangPage.o \
+  $O/ListViewDialog.o \
+  $O/MessagesDialog.o \
+  $O/OverwriteDialog.o \
+  $O/PasswordDialog.o \
+  $O/PasswordVault.o \
+  $O/ProgressDialog2.o \
+  $O/SettingsPage.o \
+  $O/SplitDialog.o \
+  $O/SystemPage.o \
+  $O/VerCtrl.o \
+  $O/AltStreamsFolder.o \
+  $O/FSDrives.o \
+  $O/LinkDialog.o \
+  $O/NetFolder.o \
+
+AGENT_OBJS = \
+  $O/Agent.o \
+  $O/AgentOut.o \
+  $O/AgentProxy.o \
+  $O/ArchiveFolder.o \
+  $O/ArchiveFolderOpen.o \
+  $O/ArchiveFolderOut.o \
+  $O/UpdateCallbackAgent.o \
+
+COMMON_OBJS = \
+  $O/DynLimBuf.o \
+  $O/IntToString.o \
+  $O/Lang.o \
+  $O/MyString.o \
+  $O/MyVector.o \
+  $O/NewHandler.o \
+  $O/Random.o \
+  $O/StringConvert.o \
+  $O/StringToInt.o \
+  $O/UTFConvert.o \
+  $O/Wildcard.o \
+
+WIN_OBJS = \
+  $O/Clipboard.o \
+  $O/CommonDialog.o \
+  $O/DLL.o \
+  $O/ErrorMsg.o \
+  $O/FileDir.o \
+  $O/FileFind.o \
+  $O/FileIO.o \
+  $O/FileLink.o \
+  $O/FileName.o \
+  $O/MemoryGlobal.o \
+  $O/MemoryLock.o \
+  $O/Menu.o \
+  $O/ProcessUtils.o \
+  $O/PropVariant.o \
+  $O/PropVariantConv.o \
+  $O/Registry.o \
+  $O/ResourceString.o \
+  $O/Shell.o \
+  $O/Synchronization.o \
+  $O/System.o \
+  $O/TimeUtils.o \
+  $O/Window.o \
+  $O/FileSystem.o \
+  $O/Net.o \
+  $O/SecurityUtils.o \
+
+WIN_CTRL_OBJS = \
+  $O/ComboBox.o \
+  $O/Dialog.o \
+  $O/ListView.o \
+  $O/PropertyPage.o \
+  $O/Window2.o \
+
+7ZIP_COMMON_OBJS = \
+  $O/CreateCoder.o \
+  $O/FilePathAutoRename.o \
+  $O/FileStreams.o \
+  $O/FilterCoder.o \
+  $O/LimitedStreams.o \
+  $O/MethodProps.o \
+  $O/ProgressUtils.o \
+  $O/PropId.o \
+  $O/StreamObjects.o \
+  $O/StreamUtils.o \
+  $O/UniqBlocks.o \
+
+UI_COMMON_OBJS = \
+  $O/ArchiveExtractCallback.o \
+  $O/ArchiveName.o \
+  $O/ArchiveOpenCallback.o \
+  $O/CompressCall.o \
+  $O/DefaultName.o \
+  $O/EnumDirItems.o \
+  $O/ExtractingFilePath.o \
+  $O/HashCalc.o \
+  $O/LoadCodecs.o \
+  $O/OpenArchive.o \
+  $O/PropIDUtils.o \
+  $O/SetProperties.o \
+  $O/SortUtils.o \
+  $O/UpdateAction.o \
+  $O/UpdateCallback.o \
+  $O/UpdatePair.o \
+  $O/UpdateProduce.o \
+  $O/WorkDir.o \
+  $O/ZipRegistry.o \
+
+EXPLORER_OBJS = \
+  $O/ContextMenu.o \
+  $O/MyMessages.o \
+  $O/RegistryContextMenu.o \
+
+GUI_OBJS = \
+  $O/HashGUI.o \
+  $O/UpdateCallbackGUI2.o \
+
+COMPRESS_OBJS = \
+  $O/CopyCoder.o \
+
+AR_COMMON_OBJS = \
+  $O/ItemNameUtils.o \
+
+C_OBJS = \
+  $O/Alloc.o \
+  $O/CpuArch.o \
+  $O/Threads.o \
+  $O/DllSecur.o \
+  $O/Sort.o \
+
+OBJS = \
+  $(C_OBJS) \
+  $(COMMON_OBJS) \
+  $(WIN_OBJS) \
+  $(WIN_CTRL_OBJS) \
+  $(7ZIP_COMMON_OBJS) \
+  $(UI_COMMON_OBJS) \
+  $(AGENT_OBJS) \
+  $(EXPLORER_OBJS) \
+  $(FM_OBJS) \
+  $(GUI_OBJS) \
+  $(AR_COMMON_OBJS) \
+  $(COMPRESS_OBJS) \
+  $O/resource.o \
+
+include ../../7zip_gcc.mak
