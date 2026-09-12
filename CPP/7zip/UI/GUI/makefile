@@ -123,6 +123,7 @@ FM_OBJS = \
   $O\StringUtils.obj \
   $O\OverwriteDialog.obj \
   $O\PasswordDialog.obj \
+  $O\PasswordListDialog.obj \
   $O\PasswordVault.obj \
   $O\ProgressDialog2.obj \
 

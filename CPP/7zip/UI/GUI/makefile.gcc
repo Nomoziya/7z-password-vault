@@ -136,6 +136,7 @@ FM_OBJS = \
   $O/StringUtils.o \
   $O/OverwriteDialog.o \
   $O/PasswordDialog.o \
+  $O/PasswordListDialog.o \
   $O/PasswordVault.o \
   $O/ProgressDialog2.o \
   $O/BrowseDialog.o \

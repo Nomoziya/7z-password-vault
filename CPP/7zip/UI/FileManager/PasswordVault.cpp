@@ -21,7 +21,10 @@ using namespace NFile;
 using namespace NIO;
 
 static const char kMagic[4] = { '7', 'Z', 'P', 'V' };
-static const Byte kVersion = 2;
+/* Version 2: DPAPI mode stored entry names in clear.
+   Version 3: DPAPI mode encrypts the names too. Version 2 files are still read. */
+static const Byte kVersion = 3;
+static const Byte kVersion_Min = 2;
 
 static const unsigned kSaltSize = 16;
 static const unsigned kIvSize = 12;
@@ -44,6 +47,12 @@ static const UInt32 kMaxEntries = 100000;
 
 static UString g_MasterPassword;
 static bool g_HaveMasterPassword = false;
+static DWORD g_MasterPasswordTick = 0;
+
+/* After this much idle time the cached master password is dropped and the
+   user has to type it again. (DWORD milliseconds; the subtraction below is
+   wrap-safe, so the ~49 day tick wraparound is not a problem.) */
+static const DWORD kMasterIdleMs = 5 * 60 * 1000;
 
 /* Best-effort overwrite of a memory buffer. The compiler is not allowed to
    optimize this away (volatile pointer). */
@@ -68,12 +77,14 @@ void CPasswordVault::SetCachedMasterPassword(const UString &password)
   SecureWipeString(g_MasterPassword);
   g_MasterPassword = password;
   g_HaveMasterPassword = true;
+  g_MasterPasswordTick = ::GetTickCount();
 }
 
 void CPasswordVault::ClearCachedMasterPassword()
 {
   SecureWipeString(g_MasterPassword);
   g_HaveMasterPassword = false;
+  g_MasterPasswordTick = 0;
 }
 
 bool CPasswordVault::HaveCachedMasterPassword()
@@ -305,17 +316,27 @@ bool CPasswordVault::PromptForMasterPassword(HWND parent, UString &password, USt
 
 bool CPasswordVault::GetMasterPassword(HWND parent, UString &password, UString &errorMessage)
 {
+  NPasswordVault::CInfo settings;
+  settings.Load();
+
+  if (g_HaveMasterPassword &&
+      settings.AutoLockMaster &&
+      (DWORD)(::GetTickCount() - g_MasterPasswordTick) > kMasterIdleMs)
+  {
+    // Idle for too long: drop the cached password and ask for it again.
+    ClearCachedMasterPassword();
+  }
+
   if (g_HaveMasterPassword)
   {
     password = g_MasterPassword;
+    g_MasterPasswordTick = ::GetTickCount();
     return true;
   }
 
   if (!PromptForMasterPassword(parent, password, errorMessage))
     return false;
 
-  NPasswordVault::CInfo settings;
-  settings.Load();
   if (settings.RememberMasterPassword)
     SetCachedMasterPassword(password);
 
@@ -361,7 +382,7 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
   }
 
   Byte version = 0;
-  if (!ReadBuf(f, &version, 1) || version != kVersion)
+  if (!ReadBuf(f, &version, 1) || version < kVersion_Min || version > kVersion)
   {
     errorMessage = L"不支持的密码库版本";
     return false;
@@ -375,7 +396,7 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
   }
 
   _masterMode = ((flags & 1) != 0);
-  return _masterMode ? Load_Master(parent, f, errorMessage) : Load_DPAPI(f, errorMessage);
+  return _masterMode ? Load_Master(parent, f, errorMessage) : Load_DPAPI(f, version, errorMessage);
 }
 
 bool CPasswordVault::Save(UString &errorMessage)
@@ -504,7 +525,93 @@ bool CPasswordVault::ParseEntries(const Byte *data, size_t size, UString &errorM
   return true;
 }
 
-bool CPasswordVault::Load_DPAPI(CInFile &f, UString &errorMessage)
+// ---------------------------------------------------------------------------
+// DPAPI-mode entry helpers
+
+/* Reads a length-prefixed DPAPI-protected string. */
+static bool Read_DPAPI_String(CInFile &f, UString &dest, UString &errorMessage)
+{
+  UInt32 blobSize = 0;
+  if (!ReadUInt32(f, blobSize) || blobSize > kMaxBlobSize)
+  {
+    errorMessage = L"密码库条目已损坏";
+    return false;
+  }
+
+  CByteBuffer blob(blobSize);
+  if (blobSize != 0 && !ReadBuf(f, blob, blobSize))
+  {
+    errorMessage = L"密码库条目已损坏";
+    return false;
+  }
+
+  CByteBuffer plain;
+  if (!DpapiUnprotect((const Byte *)blob, blobSize, plain))
+  {
+    errorMessage = L"解密失败（可能不是同一个 Windows 账户或电脑）";
+    return false;
+  }
+  if ((plain.Size() & 1) != 0)
+  {
+    errorMessage = L"密码数据无效";
+    return false;
+  }
+
+  const unsigned charCount = (unsigned)(plain.Size() / 2);
+  wchar_t *p = dest.GetBuf(charCount);
+  if (plain.Size() != 0)
+    memcpy(p, (const Byte *)plain, plain.Size());
+  p[charCount] = 0;
+  dest.ReleaseBuf_SetLen(charCount);
+  plain.Wipe();
+  return true;
+}
+
+static bool Write_DPAPI_String(COutFile &f, const UString &s, UString &errorMessage)
+{
+  CByteBuffer blob;
+  if (!DpapiProtect((const void *)(const wchar_t *)s, (size_t)s.Len() * sizeof(wchar_t), blob))
+  {
+    errorMessage = L"加密失败";
+    return false;
+  }
+  const UInt32 blobSize = (UInt32)blob.Size();
+  if (!WriteUInt32(f, blobSize) || (blobSize != 0 && !WriteBuf(f, (const Byte *)blob, blobSize)))
+  {
+    errorMessage = L"无法写入密码库文件";
+    return false;
+  }
+  return true;
+}
+
+/* Reads a length-prefixed UTF-16 string stored in clear (used by vault version 2,
+   where DPAPI mode did not encrypt the entry names). */
+static bool Read_PlainString(CInFile &f, UString &dest, UString &errorMessage)
+{
+  UInt32 bytes = 0;
+  if (!ReadUInt32(f, bytes) || (bytes & 1) != 0 || bytes > kMaxNameBytes)
+  {
+    errorMessage = L"密码库条目已损坏";
+    return false;
+  }
+
+  CByteBuffer buf(bytes);
+  if (bytes != 0 && !ReadBuf(f, buf, bytes))
+  {
+    errorMessage = L"密码库条目已损坏";
+    return false;
+  }
+
+  const unsigned charCount = bytes / 2;
+  wchar_t *p = dest.GetBuf(charCount);
+  if (bytes != 0)
+    memcpy(p, (const Byte *)buf, bytes);
+  p[charCount] = 0;
+  dest.ReleaseBuf_SetLen(charCount);
+  return true;
+}
+
+bool CPasswordVault::Load_DPAPI(CInFile &f, Byte version, UString &errorMessage)
 {
   UInt32 count = 0;
   if (!ReadUInt32(f, count) || count > kMaxEntries)
@@ -517,59 +624,15 @@ bool CPasswordVault::Load_DPAPI(CInFile &f, UString &errorMessage)
   {
     CPasswordVaultEntry entry;
 
-    UInt32 nameBytes = 0;
-    if (!ReadUInt32(f, nameBytes) || (nameBytes & 1) != 0 || nameBytes > kMaxNameBytes)
-    {
-      errorMessage = L"密码库条目已损坏";
+    /* Version 3 encrypts the names as well; version 2 stored them in clear. */
+    const bool nameOk = (version >= 3)
+        ? Read_DPAPI_String(f, entry.Name, errorMessage)
+        : Read_PlainString(f, entry.Name, errorMessage);
+    if (!nameOk)
       return false;
-    }
-    {
-      CByteBuffer nameBuf(nameBytes);
-      if (nameBytes != 0 && !ReadBuf(f, nameBuf, nameBytes))
-      {
-        errorMessage = L"密码库条目已损坏";
-        return false;
-      }
-      const unsigned charCount = nameBytes / 2;
-      wchar_t *p = entry.Name.GetBuf(charCount);
-      if (nameBytes != 0)
-        memcpy(p, (const Byte *)nameBuf, nameBytes);
-      p[charCount] = 0;
-      entry.Name.ReleaseBuf_SetLen(charCount);
-    }
 
-    UInt32 blobSize = 0;
-    if (!ReadUInt32(f, blobSize) || blobSize > kMaxBlobSize)
-    {
-      errorMessage = L"密码库条目已损坏";
+    if (!Read_DPAPI_String(f, entry.Password, errorMessage))
       return false;
-    }
-    {
-      CByteBuffer blob(blobSize);
-      if (blobSize != 0 && !ReadBuf(f, blob, blobSize))
-      {
-        errorMessage = L"密码库条目已损坏";
-        return false;
-      }
-
-      CByteBuffer plain;
-      if (!DpapiUnprotect((const Byte *)blob, blobSize, plain))
-      {
-        errorMessage = L"解密失败（可能不是同一个 Windows 账户或电脑）";
-        return false;
-      }
-      if ((plain.Size() & 1) != 0)
-      {
-        errorMessage = L"密码数据无效";
-        return false;
-      }
-      const unsigned charCount = (unsigned)(plain.Size() / 2);
-      wchar_t *p = entry.Password.GetBuf(charCount);
-      memcpy(p, (const Byte *)plain, plain.Size());
-      p[charCount] = 0;
-      entry.Password.ReleaseBuf_SetLen(charCount);
-      plain.Wipe();
-    }
 
     _entries.Add(entry);
   }
@@ -643,32 +706,12 @@ bool CPasswordVault::Save_DPAPI(COutFile &f, UString &errorMessage)
   FOR_VECTOR(i, _entries)
   {
     const CPasswordVaultEntry &entry = _entries[i];
-
-    const UInt32 nameBytes = (UInt32)(entry.Name.Len() * 2);
-    if (!WriteUInt32(f, nameBytes))
-    {
-      errorMessage = L"无法写入密码库文件";
+    /* Names are encrypted too, so the file does not reveal what the saved
+       passwords are used for. */
+    if (!Write_DPAPI_String(f, entry.Name, errorMessage))
       return false;
-    }
-    if (nameBytes != 0 && !WriteBuf(f, (const void *)(const wchar_t *)entry.Name, nameBytes))
-    {
-      errorMessage = L"无法写入密码库文件";
+    if (!Write_DPAPI_String(f, entry.Password, errorMessage))
       return false;
-    }
-
-    CByteBuffer blob;
-    if (!DpapiProtect((const void *)(const wchar_t *)entry.Password,
-        (size_t)entry.Password.Len() * 2, blob))
-    {
-      errorMessage = L"加密失败";
-      return false;
-    }
-    const UInt32 blobSize = (UInt32)blob.Size();
-    if (!WriteUInt32(f, blobSize) || (blobSize != 0 && !WriteBuf(f, (const Byte *)blob, blobSize)))
-    {
-      errorMessage = L"无法写入密码库文件";
-      return false;
-    }
   }
 
   return true;

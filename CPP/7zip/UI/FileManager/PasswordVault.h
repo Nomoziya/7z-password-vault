@@ -25,7 +25,7 @@ class CPasswordVault
   UString _path;
   bool _masterMode; // how the file was last saved
 
-  bool Load_DPAPI(NWindows::NFile::NIO::CInFile &f, UString &errorMessage);
+  bool Load_DPAPI(NWindows::NFile::NIO::CInFile &f, Byte version, UString &errorMessage);
   bool Load_Master(HWND parent, NWindows::NFile::NIO::CInFile &f, UString &errorMessage);
   bool Save_DPAPI(NWindows::NFile::NIO::COutFile &f, UString &errorMessage);
   bool Save_Master(NWindows::NFile::NIO::COutFile &f, UString &errorMessage);

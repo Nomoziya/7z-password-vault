@@ -605,7 +605,10 @@ static LPCTSTR const kKeyName = TEXT("PasswordVault");
 static LPCTSTR const kVaultPath = TEXT("VaultPath");
 static LPCTSTR const kUseMasterPassword = TEXT("UseMasterPassword");
 static LPCTSTR const kRememberMasterPassword = TEXT("RememberMasterPassword");
-static LPCTSTR const kAutoFill = TEXT("AutoFill");
+static LPCTSTR const kAutoLockMaster = TEXT("AutoLockMaster");
+static LPCTSTR const kEditByRightClick = TEXT("EditByRightClick");
+static LPCTSTR const kAutoTypeByName = TEXT("AutoTypeByName");
+static LPCTSTR const kPromptToSaveNew = TEXT("PromptToSaveNew");
 
 void CInfo::Save() const
 {
@@ -615,7 +618,10 @@ void CInfo::Save() const
   key.SetValue(kVaultPath, fs2us(VaultPath));
   key.SetValue(kUseMasterPassword, UseMasterPassword);
   key.SetValue(kRememberMasterPassword, RememberMasterPassword);
-  key.SetValue(kAutoFill, AutoFill);
+  key.SetValue(kAutoLockMaster, AutoLockMaster);
+  key.SetValue(kEditByRightClick, EditByRightClick);
+  key.SetValue(kAutoTypeByName, AutoTypeByName);
+  key.SetValue(kPromptToSaveNew, PromptToSaveNew);
 }
 
 void CInfo::Load()
@@ -623,7 +629,10 @@ void CInfo::Load()
   VaultPath.Empty();
   UseMasterPassword = false;
   RememberMasterPassword = false;
-  AutoFill = false;
+  AutoLockMaster = true;      // safer default: lock the cached master password
+  EditByRightClick = false;   // double-click edits by default
+  AutoTypeByName = true;      // typing a saved name auto-fills its password
+  PromptToSaveNew = true;     // ask before storing a new password
 
   CS_LOCK
   CKey key;
@@ -635,6 +644,9 @@ void CInfo::Load()
     VaultPath = us2fs(pathU);
   key.GetValue_bool_IfOk(kUseMasterPassword, UseMasterPassword);
   key.GetValue_bool_IfOk(kRememberMasterPassword, RememberMasterPassword);
-  key.GetValue_bool_IfOk(kAutoFill, AutoFill);
+  key.GetValue_bool_IfOk(kAutoLockMaster, AutoLockMaster);
+  key.GetValue_bool_IfOk(kEditByRightClick, EditByRightClick);
+  key.GetValue_bool_IfOk(kAutoTypeByName, AutoTypeByName);
+  key.GetValue_bool_IfOk(kPromptToSaveNew, PromptToSaveNew);
 }
 }

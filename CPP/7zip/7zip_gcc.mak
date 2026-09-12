@@ -269,7 +269,11 @@ $(PROGPATH_STATIC): $(OBJS)
 
 
 ifndef NO_DEFAULT_RES
-$O/resource.o: resource.rc
+# windres has no dependency generation, so we declare every .rc file of this
+# component (and the shared FileManager dialog resources) as prerequisites.
+# Otherwise editing an included .rc would leave a stale resource.o, which makes
+# dialog control IDs disagree with the code.
+$O/resource.o: resource.rc $(wildcard *.rc) $(wildcard ../FileManager/*.rc)
 	$(RC) $(RFLAGS) resource.rc $@
 
 # windres.exe : in old version mingw:
@@ -1102,6 +1106,8 @@ $O/PasswordDialog.o: ../../UI/FileManager/PasswordDialog.cpp
 $O/PasswordVault.o: ../../UI/FileManager/PasswordVault.cpp
 	$(CXX) $(CXXFLAGS) $<
 $O/PasswordPage.o: ../../UI/FileManager/PasswordPage.cpp
+	$(CXX) $(CXXFLAGS) $<
+$O/PasswordListDialog.o: ../../UI/FileManager/PasswordListDialog.cpp
 	$(CXX) $(CXXFLAGS) $<
 $O/ProgramLocation.o: ../../UI/FileManager/ProgramLocation.cpp
 	$(CXX) $(CXXFLAGS) $<

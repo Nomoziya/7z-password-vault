@@ -191,10 +191,13 @@ namespace NPasswordVault
 {
   struct CInfo
   {
-    FString VaultPath;          // empty = default (%APPDATA%\7-Zip\7zPasswordVault.dat)
-    bool UseMasterPassword;     // false = DPAPI, true = AES-256 with master password
+    FString VaultPath;           // empty = default (%APPDATA%\7-Zip\7zPasswordVault.dat)
+    bool UseMasterPassword;      // false = DPAPI, true = AES-256 with master password
     bool RememberMasterPassword; // cache master password for process lifetime
-    bool AutoFill;              // auto-fill first/only matching password
+    bool AutoLockMaster;         // drop the cached master password after idle time
+    bool EditByRightClick;       // true = right-click edits a saved entry, false = double-click
+    bool AutoTypeByName;         // typing a saved name auto-fills its password
+    bool PromptToSaveNew;        // ask to store passwords that are not in the vault yet
 
     void Save() const;
     void Load();

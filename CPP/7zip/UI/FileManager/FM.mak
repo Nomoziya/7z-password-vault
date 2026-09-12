@@ -66,6 +66,7 @@ FM_OBJS = \
   $O\MessagesDialog.obj \
   $O\OverwriteDialog.obj \
   $O\PasswordDialog.obj \
+  $O\PasswordListDialog.obj \
   $O\PasswordVault.obj \
   $O\PasswordPage.obj \
   $O\ProgressDialog2.obj \

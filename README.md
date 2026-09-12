@@ -14,21 +14,46 @@ A modified build of **7-Zip 26.03** with an integrated, encrypted, named passwor
 2. **Hybrid encryption** (choose in Settings):
    - **DPAPI (default)** — tied to your Windows account + machine, no master password needed.
    - **AES-256-GCM + master password (optional)** — portable; move/backup the vault to another machine.
-3. **One-click fill** — a "Saved passwords" dropdown in the password dialog fills the password automatically.
-4. **Password naming** — name each password for quick lookup.
-5. **Password management settings page** — 7-Zip "Tools → Options" gains a new "Password" page.
-6. **Localized UI** — new buttons/options are localized (English / 简体中文 / 繁體中文 included).
+3. **Saved-passwords window** — a 3 column table (`Name | Password | Delete`):
+   - **single click** on the Name or Password cell types that password into the input box;
+   - **double click** (or **right click**, per the setting) opens the edit dialog;
+   - **click Delete** removes the row after a confirmation prompt.
+4. **New password window** — name + password; the name may be left empty and a unique one is generated.
+5. **Auto-type by name** — typing the name of a saved entry in the password box fills its password.
+6. **Offer to save** — entering a password that is not stored yet asks whether to save it.
+7. **Password management settings page** — 7-Zip "Tools → Options" gains a new "Password manager" page.
+8. **Localized UI** — every new dialog and option is localized (English / 简体中文 / 繁體中文 included).
 
-### Settings page (Tools → Options → Password)
+### Saved-passwords window
+
+Open it with the **Saved passwords...** button in the password dialog. It stays open while you pick,
+so you can compare several entries; the hint line shows which entry was filled.
+
+| Action | Result |
+|--------|--------|
+| Click the **Name** or **Password** cell | That entry's password is typed into the input box (the window stays open) |
+| Double click a row | Opens the **Edit password** window (default) |
+| Right click a row | Opens the **Edit password** window (only when the setting is enabled) |
+| Click **Delete** | Asks for confirmation, then deletes that entry |
+| Click **New password...** | Opens the new-entry window (name optional, empty name = generated name) |
+| Click **Close** | Closes the window; the input box keeps whatever was filled |
+
+### Settings page (Tools → Options → Password manager)
 
 | Option | Meaning |
 |--------|---------|
 | Vault path (empty = default) | Custom vault file location (default `%APPDATA%\7-Zip\7zPasswordVault.dat`) |
+| Browse... | Pick the vault file location |
 | Use master password (portable) | Encrypt the vault with AES-256-GCM + master password |
 | Set master password... | Set / change the master password (entered twice) |
+| Clear master password... | Re-encrypt with DPAPI (removes the master password requirement) |
 | Remember master password this session | Ask for the master password only once per run |
-| Auto-fill the only matching password | Auto-fill when exactly one password is saved |
+| Auto-lock the master password after 5 idle minutes | Forget the cached master password after 5 minutes |
 | Show password by default | Show the password in clear text by default |
+| Edit saved passwords with the right mouse button | Right click edits instead of double click |
+| Auto-fill the password when a saved name is typed | Turn off to be asked before filling |
+| Offer to save an unsaved password | Turn off to never be asked to store a new password |
+| Export vault... / Import vault... | Copy the vault to/from another file |
 
 ### Build
 
@@ -41,15 +66,41 @@ cd ..\FileManager
 make -f ../../cmpl_gcc.mak
 ```
 
-Outputs are in `b\g\`. Run them next to the official `7z.dll` and `Lang\` folder.
+Outputs are in `b\g\`. The object directory (`b\g`) must exist first — the makefile's `mkdir`
+rule only works inside an MSYS shell:
+
+```bat
+mkdir CPP\7zip\UI\GUI\b\g 2>nul
+mkdir CPP\7zip\UI\FileManager\b\g 2>nul
+```
+
+Run the executables next to the official `7z.dll` and `Lang\` folder.
 
 MSVC (nmake): use `GUI\makefile` and `FileManager\makefile` (already link `crypt32.lib` + `bcrypt.lib`).
 
+### Tests
+
+`tests\ui-test.ps1` drives the real dialogs of the built `7zFM.exe` through Win32 messages and
+real mouse input (no test framework needed):
+
+```powershell
+pwsh -NoProfile -File tests\ui-test.ps1
+pwsh -NoProfile -File tests\ui-test.ps1 -SevenZipDir "D:\path\to\7-Zip"
+```
+
+It covers the vault round-trip, the saved-passwords window (pick / edit / delete), auto-typing,
+the save prompt, the generated name, the settings page and a set of corrupt-vault files. It exits
+non-zero when a check fails.
+
 ### Security
 
-- DPAPI mode: decryptable only by the current Windows account on the current machine.
-- Master-password mode: AES-256-GCM with a key derived via PBKDF2-HMAC-SHA256 (Windows CNG/bcrypt).
-- Vault file: `%APPDATA%\7-Zip\7zPasswordVault.dat` (configurable).
+- DPAPI mode: decryptable only by the current Windows account on the current machine. Entry names
+  are encrypted as well as the passwords.
+- Master-password mode: AES-256-GCM with a key derived via PBKDF2-HMAC-SHA256 (Windows CNG/bcrypt),
+  per-vault random salt and nonce.
+- The vault is written through a temporary file and an atomic replace, so an interrupted write
+  cannot destroy an existing vault.
+- Master password, derived keys and plaintext buffers are wiped from memory after use.
 
 ### License
 
@@ -61,25 +112,50 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 
 ### 功能
 
-1. **本地存储密码** —— 在密码对话框里点 `保存...` 保存，密码写入本地密码库文件。
+1. **本地存储密码** —— 在密码对话框里点「新建密码...」保存，密码写入本地加密密码库文件。
 2. **加密存储（混合方案）**：
-   - **DPAPI（默认）**：Windows 账户 + 电脑绑定，免主密码。
-   - **AES-256-GCM + 主密码（可选）**：可移植，可备份/迁移。
-3. **解压时一键填入** —— 密码对话框新增「已保存的密码」下拉框，选中即自动填入。
-4. **密码命名** —— 保存时给密码命名，下拉框按名称快速查找。
-5. **密码管理设置页** —— 7-Zip「工具 → 选项」新增「密码管理」页。
-6. **多语言** —— 新增界面已本地化（英文 / 简体中文 / 繁体中文）。
+   - **DPAPI（默认）**：Windows 账户 + 电脑绑定，免主密码；**名称与密码都加密**。
+   - **AES-256-GCM + 主密码（可选）**：可移植，可备份/迁移到其它电脑。
+3. **已保存的密码窗口** —— 三列表格（`名称 | 密码 | 删除`）：
+   - **单击**名称或密码单元格 → 直接键入到输入框；
+   - **双击**（或在设置里改成**右键**）→ 打开修改窗口；
+   - **单击「删除」** → 二次确认后删除该行。
+4. **新建密码窗口** —— 填写名称 + 密码；**名称可以留空**，会自动生成一个不重复的名称。
+5. **按名称自动键入** —— 在密码框里输入已保存的名称，自动填入该名称下的密码。
+6. **提示保存** —— 输入密码库里没有的密码时，弹窗询问是否保存到密码库。
+7. **密码管理设置页** —— 7-Zip「工具 → 选项」新增「密码管理」页。
+8. **多语言** —— 新增对话框与选项均已本地化（英文 / 简体中文 / 繁体中文）。
+
+### 已保存的密码窗口
+
+在密码对话框里点「已保存的密码...」打开。窗口**不会因为填入而关闭**，方便对比多条记录；
+提示行会显示刚刚填入了哪一条。
+
+| 操作 | 结果 |
+|------|------|
+| 单击**名称**或**密码**单元格 | 该条密码键入到输入框（窗口保持打开） |
+| 双击某一行 | 打开「修改密码」窗口（默认） |
+| 右键某一行 | 打开「修改密码」窗口（需在设置中开启） |
+| 单击**删除** | 二次确认后删除该条 |
+| 单击**新建密码...** | 打开新建窗口（名称可留空，留空则自动命名） |
+| 单击**关闭** | 关闭窗口，输入框中已填入的内容保留 |
 
 ### 密码管理设置页（工具 → 选项 → 密码管理）
 
 | 选项 | 说明 |
 |------|------|
 | 密码库位置（留空使用默认） | 自定义密码库文件存放路径（默认 `%APPDATA%\7-Zip\7zPasswordVault.dat`） |
+| 浏览... | 选择密码库文件位置 |
 | 使用主密码加密（可移植） | 开启后用 AES-256-GCM + 主密码加密，可迁移到其它电脑 |
 | 设置主密码... | 设置 / 修改主密码（输入两次） |
+| 清除主密码... | 改回 DPAPI 加密（不再需要主密码） |
 | 本次会话记住主密码 | 开启后本次运行只输入一次主密码 |
-| 自动填入唯一匹配的密码 | 只有一条已存密码时，打开密码框自动填入 |
+| 主密码闲置 5 分钟后自动锁定 | 闲置 5 分钟后清除内存中缓存的主密码 |
 | 默认显示密码 | 密码框默认显示明文 |
+| 使用右键编辑已存密码（否则为双击） | 用右键代替双击来修改 |
+| 输入已保存的名称时自动填入密码 | 关闭后改为先询问再填入 |
+| 输入未保存的密码时提示保存 | 关闭后不再询问是否保存新密码 |
+| 导出密码库... / 导入密码库... | 把密码库复制到 / 从其它文件导入 |
 
 ### 构建
 
@@ -92,17 +168,39 @@ cd ..\FileManager
 make -f ../../cmpl_gcc.mak
 ```
 
-产物在各自目录 `b\g\` 下。运行需同目录的官方 `7z.dll` 与 `Lang\`（可从官方 7-Zip 26.03 安装包获取，或本仓库外 `7-Zip-密码管家版\` 目录）。
+产物在各自目录 `b\g\` 下。**首次构建需先手动创建对象目录**——makefile 里的 `mkdir` 规则
+只在 MSYS 环境下可用：
+
+```bat
+mkdir CPP\7zip\UI\GUI\b\g 2>nul
+mkdir CPP\7zip\UI\FileManager\b\g 2>nul
+```
+
+运行需同目录的官方 `7z.dll` 与 `Lang\`（可从官方 7-Zip 26.03 安装包获取）。
 
 MSVC（nmake）：使用 `GUI\makefile` 与 `FileManager\makefile`（已链接 `crypt32.lib` + `bcrypt.lib`）。
+
+### 测试
+
+`tests\ui-test.ps1` 通过 Win32 消息与真实鼠标输入驱动构建出的 `7zFM.exe` 真实对话框，
+不需要任何测试框架：
+
+```powershell
+pwsh -NoProfile -File tests\ui-test.ps1
+pwsh -NoProfile -File tests\ui-test.ps1 -SevenZipDir "D:\path\to\7-Zip"
+```
+
+覆盖：密码库往返、已保存密码窗口（填入 / 修改 / 删除）、自动键入、保存提示、自动命名、
+设置页、以及一组损坏的密码库文件（必须报错且不崩溃）。有失败项时以非零码退出。
 
 ### 改动文件
 
 | 文件 | 说明 |
 |------|------|
-| `CPP/7zip/UI/FileManager/PasswordVault.h` / `.cpp` | 新增：DPAPI + AES-256-GCM 混合加密、密码库存储 |
-| `CPP/7zip/UI/FileManager/PasswordDialog.h` / `.cpp` / `.rc` / `PasswordDialogRes.h` | 修改：密码对话框加下拉选择、保存、删除、命名、主密码对话框 |
-| `CPP/7zip/UI/FileManager/PasswordPage.h` / `.cpp` / `.rc` / `PasswordPageRes.h` | 新增：密码管理设置页 |
+| `CPP/7zip/UI/FileManager/PasswordVault.h` / `.cpp` | 新增：DPAPI + AES-256-GCM 混合加密、密码库存储、主密码对话框 |
+| `CPP/7zip/UI/FileManager/PasswordListDialog.h` / `.cpp` | 新增：三列「已保存的密码」窗口（填入 / 修改 / 删除） |
+| `CPP/7zip/UI/FileManager/PasswordDialog.h` / `.cpp` / `.rc` / `PasswordDialogRes.h` | 修改：密码对话框改为「已保存的密码... / 新建密码...」按钮，新增新建/修改窗口、按名称自动键入、保存提示 |
+| `CPP/7zip/UI/FileManager/PasswordPage.h` / `.cpp` / `.rc` / `PasswordPageRes.h` | 新增：密码管理设置页（含导出/导入、清除主密码） |
 | `CPP/7zip/UI/FileManager/OptionsDialog.cpp` | 修改：注册密码管理设置页 |
 | `CPP/7zip/UI/Common/ZipRegistry.h` / `.cpp` | 修改：新增密码库设置读写 |
 | `CPP/7zip/UI/GUI/UpdateCallbackGUI2.cpp` | 修改：右键解压路径也遵循「默认显示密码」 |
@@ -110,6 +208,7 @@ MSVC（nmake）：使用 `GUI\makefile` 与 `FileManager\makefile`（已链接 `
 | `CPP/7zip/UI/FileManager/FM.mak` / `makefile.gcc` | 修改：FM 构建文件（链接 bcrypt） |
 | `CPP/7zip/7zip_gcc.mak` | 修改：新增编译规则、链接 bcrypt、**头文件依赖跟踪（-MMD -MP）** |
 | `Lang/en.ttt` / `zh-cn.txt` / `zh-tw.txt` | 修改：新增界面字符串本地化 |
+| `tests/ui-test.ps1` | 新增：UI 冒烟测试 |
 
 ### 开发注意（重要）
 

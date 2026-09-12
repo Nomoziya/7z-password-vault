@@ -251,10 +251,16 @@ Password
 Vault path (empty = default):
 Use master password (portable)
 Remember master password this session
-Auto-fill the only matching password
+Lock the master password after 5 minutes idle
 Show password by default
 Set master password...
 Browse...
+Clear master password...
+Edit saved entries with right-click (else double-click)
+Type a saved name to fill its password automatically
+Ask to save passwords that are not in the vault
+Export vault...
+Import vault...
 2900
 About 7-Zip
 7-Zip is free software
@@ -360,13 +366,25 @@ Use only English letters, numbers and special characters (!, #, $, ...) for pass
 Password is too long
 Password
 3808
-Saved passwords:
-Save...
-Delete
-Save password
+Saved passwords...
+New password...
+New password
 Name:
+Password:
 Master password
 Master password:
+Saved passwords
+Click a name or password to fill it in; double-click to edit; click Delete to remove the entry.
+Close
+Name
+Password
+Delete
+Edit password
+Filled in:
+Delete this saved password?
+Untitled
+This password is not in the vault yet. Save it now?
+A saved password has this name. Fill in its password?
 3900
 Elapsed time:
 Remaining time:

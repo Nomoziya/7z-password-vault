@@ -80,6 +80,7 @@ FM_OBJS = \
   $O/MessagesDialog.o \
   $O/OverwriteDialog.o \
   $O/PasswordDialog.o \
+  $O/PasswordListDialog.o \
   $O/PasswordVault.o \
   $O/PasswordPage.o \
   $O/ProgressDialog2.o \

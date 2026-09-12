@@ -20,8 +20,12 @@ class CPasswordPage: public NWindows::NControl::CPropertyPage
   virtual bool OnButtonClicked(unsigned buttonID, HWND buttonHWND) Z7_override;
 
   void ModifiedEvent();
+  UString GetVaultPathFromUi();
   void OnBrowse();
   void OnSetMasterPassword();
+  void OnClearMasterPassword();
+  void OnExport();
+  void OnImport();
 public:
 };
 

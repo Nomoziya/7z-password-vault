@@ -21,12 +21,35 @@ static const UInt32 kLangIDs[] =
   IDT_PASSWORD_VAULT_PATH,
   IDX_PASSWORD_USE_MASTER,
   IDX_PASSWORD_REMEMBER,
-  IDX_PASSWORD_AUTOFILL,
-  IDX_PASSWORD_SHOW_DEFAULT,
+  IDX_PASSWORD_AUTOLOCK,
   IDB_PASSWORD_SET_MASTER,
-  IDB_PASSWORD_VAULT_BROWSE
+  IDB_PASSWORD_CLEAR_MASTER,
+  IDX_PASSWORD_SHOW_DEFAULT,
+  IDX_PASSWORD_EDIT_RIGHT,
+  IDX_PASSWORD_AUTOTYPE,
+  IDX_PASSWORD_PROMPT_SAVE,
+  IDB_PASSWORD_VAULT_BROWSE,
+  IDB_PASSWORD_EXPORT,
+  IDB_PASSWORD_IMPORT
 };
 #endif
+
+static void ErrorBox(HWND wnd, const UString &message)
+{
+  if (message.IsEmpty())
+    return;
+  ::MessageBoxW(wnd, message, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
+}
+
+static void InfoBox(HWND wnd, const UString &message)
+{
+  ::MessageBoxW(wnd, message, L"7-Zip 密码管家", MB_ICONINFORMATION | MB_OK);
+}
+
+static bool FileExists(const UString &path)
+{
+  return ::GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
+}
 
 void CPasswordPage::ModifiedEvent()
 {
@@ -34,6 +57,16 @@ void CPasswordPage::ModifiedEvent()
     return;
   _needSave = true;
   Changed();
+}
+
+UString CPasswordPage::GetVaultPathFromUi()
+{
+  UString pathU;
+  _vaultPathEdit.GetText(pathU);
+  pathU.Trim();
+  if (pathU.IsEmpty())
+    return CPasswordVault::GetDefaultPath();
+  return pathU;
 }
 
 bool CPasswordPage::OnInit()
@@ -56,7 +89,10 @@ bool CPasswordPage::OnInit()
   _vaultPathEdit.SetText(settings.VaultPath);
   CheckButton(IDX_PASSWORD_USE_MASTER, settings.UseMasterPassword);
   CheckButton(IDX_PASSWORD_REMEMBER, settings.RememberMasterPassword);
-  CheckButton(IDX_PASSWORD_AUTOFILL, settings.AutoFill);
+  CheckButton(IDX_PASSWORD_AUTOLOCK, settings.AutoLockMaster);
+  CheckButton(IDX_PASSWORD_EDIT_RIGHT, settings.EditByRightClick);
+  CheckButton(IDX_PASSWORD_AUTOTYPE, settings.AutoTypeByName);
+  CheckButton(IDX_PASSWORD_PROMPT_SAVE, settings.PromptToSaveNew);
   CheckButton(IDX_PASSWORD_SHOW_DEFAULT, NExtract::Read_ShowPassword());
 
   _initMode = false;
@@ -75,11 +111,7 @@ void CPasswordPage::OnBrowse()
 void CPasswordPage::OnSetMasterPassword()
 {
   UString error;
-
-  UString pathU;
-  _vaultPathEdit.GetText(pathU);
-  pathU.Trim();
-  const UString vaultPath = pathU.IsEmpty() ? CPasswordVault::GetDefaultPath() : pathU;
+  const UString vaultPath = GetVaultPathFromUi();
 
   /* Load the existing vault FIRST. If it is already encrypted with a master
      password, this asks for the OLD password (or uses the cached one).
@@ -89,10 +121,10 @@ void CPasswordPage::OnSetMasterPassword()
   vault.SetPath(vaultPath);
   if (!vault.Load(*this, error))
   {
-    if (!error.IsEmpty())
-      ::MessageBoxW(*this, error, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
+    ErrorBox(*this, error);
     return;
   }
+
   UString pw1, pw2;
   if (!CPasswordVault::PromptForMasterPassword(*this, pw1, error))
     return;
@@ -110,7 +142,6 @@ void CPasswordPage::OnSetMasterPassword()
     return;
   }
 
-  // Switch to master-password mode, then re-encrypt the vault with the new password.
   {
     NPasswordVault::CInfo settings;
     settings.Load();
@@ -123,7 +154,7 @@ void CPasswordPage::OnSetMasterPassword()
 
   if (!vault.Save(error))
   {
-    ::MessageBoxW(*this, error, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
+    ErrorBox(*this, error);
     return;
   }
 
@@ -132,6 +163,152 @@ void CPasswordPage::OnSetMasterPassword()
   _oldVaultPath = us2fs(vaultPath);
   _needSave = true;
   Changed();
+}
+
+void CPasswordPage::OnClearMasterPassword()
+{
+  UString error;
+  const UString vaultPath = GetVaultPathFromUi();
+
+  CPasswordVault vault;
+  vault.SetPath(vaultPath);
+  if (!vault.Load(*this, error))
+  {
+    ErrorBox(*this, error);
+    return;
+  }
+
+  if (::MessageBoxW(*this,
+      L"确定要清除主密码吗？\n\n清除后将改用 Windows 凭据（DPAPI）加密，"
+      L"密码库只能在本机本账户下解密。",
+      L"7-Zip 密码管家", MB_ICONQUESTION | MB_YESNO) != IDYES)
+    return;
+
+  {
+    NPasswordVault::CInfo settings;
+    settings.Load();
+    settings.UseMasterPassword = false;
+    settings.VaultPath = us2fs(vaultPath);
+    settings.Save();
+  }
+  CPasswordVault::ClearCachedMasterPassword();
+
+  if (!vault.Save(error))
+  {
+    ErrorBox(*this, error);
+    return;
+  }
+
+  CheckButton(IDX_PASSWORD_USE_MASTER, false);
+  _oldUseMaster = false;
+  _oldVaultPath = us2fs(vaultPath);
+  _needSave = true;
+  Changed();
+  InfoBox(*this, L"主密码已清除，密码库已改用 DPAPI 加密。");
+}
+
+void CPasswordPage::OnExport()
+{
+  const UString vaultPath = GetVaultPathFromUi();
+  if (!FileExists(vaultPath))
+  {
+    InfoBox(*this, L"密码库文件还不存在，请先保存至少一条密码。");
+    return;
+  }
+
+  CBrowseInfo bi;
+  bi.hwndOwner = *this;
+  bi.SaveMode = true;
+  bi.lpstrTitle = L"导出密码库";
+  bi.FilePath = vaultPath;
+
+  CObjectVector<CBrowseFilterInfo> filters;
+  {
+    CBrowseFilterInfo f;
+    f.Description = L"密码库文件";
+    f.Masks.Add(L"*.dat");
+    filters.Add(f);
+  }
+  if (!bi.BrowseForFile(filters))
+    return;
+
+  if (!::CopyFileW(vaultPath, bi.FilePath, TRUE))
+  {
+    ErrorBox(*this, L"导出失败，无法写入目标文件。");
+    return;
+  }
+
+  InfoBox(*this,
+      L"密码库已导出。\n\n注意：DPAPI 模式下导出的文件只能在同一台电脑的同一 "
+      L"Windows 账户下解密；主密码模式下可在其它电脑用主密码解密。");
+}
+
+void CPasswordPage::OnImport()
+{
+  CBrowseInfo bi;
+  bi.hwndOwner = *this;
+  bi.SaveMode = false;
+  bi.lpstrTitle = L"导入密码库";
+
+  CObjectVector<CBrowseFilterInfo> filters;
+  {
+    CBrowseFilterInfo f;
+    f.Description = L"密码库文件";
+    f.Masks.Add(L"*.dat");
+    filters.Add(f);
+  }
+  if (!bi.BrowseForFile(filters))
+    return;
+
+  UString error;
+  CPasswordVault src;
+  src.SetPath(bi.FilePath);
+  if (!src.Load(*this, error))
+  {
+    ErrorBox(*this, error);
+    return;
+  }
+
+  const UString vaultPath = GetVaultPathFromUi();
+  CPasswordVault dst;
+  dst.SetPath(vaultPath);
+  if (!dst.Load(*this, error))
+  {
+    ErrorBox(*this, error);
+    return;
+  }
+
+  unsigned added = 0;
+  unsigned updated = 0;
+  const CObjectVector<CPasswordVaultEntry> &srcEntries = src.Entries();
+  FOR_VECTOR(i, srcEntries)
+  {
+    const CPasswordVaultEntry &entry = srcEntries[i];
+    const int index = dst.FindByName(entry.Name);
+    if (index >= 0)
+    {
+      dst.Entries()[(unsigned)index].Password = entry.Password;
+      updated++;
+    }
+    else
+    {
+      dst.Entries().Add(entry);
+      added++;
+    }
+  }
+
+  if (!dst.Save(error))
+  {
+    ErrorBox(*this, error);
+    return;
+  }
+
+  UString msg = L"导入完成：新增 ";
+  msg.Add_UInt32(added);
+  msg += L" 条，更新 ";
+  msg.Add_UInt32(updated);
+  msg += L" 条。";
+  InfoBox(*this, msg);
 }
 
 bool CPasswordPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
@@ -144,9 +321,21 @@ bool CPasswordPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
     case IDB_PASSWORD_SET_MASTER:
       OnSetMasterPassword();
       return true;
+    case IDB_PASSWORD_CLEAR_MASTER:
+      OnClearMasterPassword();
+      return true;
+    case IDB_PASSWORD_EXPORT:
+      OnExport();
+      return true;
+    case IDB_PASSWORD_IMPORT:
+      OnImport();
+      return true;
     case IDX_PASSWORD_USE_MASTER:
     case IDX_PASSWORD_REMEMBER:
-    case IDX_PASSWORD_AUTOFILL:
+    case IDX_PASSWORD_AUTOLOCK:
+    case IDX_PASSWORD_EDIT_RIGHT:
+    case IDX_PASSWORD_AUTOTYPE:
+    case IDX_PASSWORD_PROMPT_SAVE:
     case IDX_PASSWORD_SHOW_DEFAULT:
       ModifiedEvent();
       return true;
@@ -172,40 +361,61 @@ LONG CPasswordPage::OnApply()
   UString pathU;
   _vaultPathEdit.GetText(pathU);
   pathU.Trim();
-  const FString newVaultPath = us2fs(pathU);
+
   const bool newUseMaster = IsButtonCheckedBool(IDX_PASSWORD_USE_MASTER);
+  const bool remember = IsButtonCheckedBool(IDX_PASSWORD_REMEMBER);
 
   NPasswordVault::CInfo settings;
   settings.Load();
-  settings.VaultPath = newVaultPath;
+  settings.VaultPath = us2fs(pathU);
   settings.UseMasterPassword = newUseMaster;
-  settings.RememberMasterPassword = IsButtonCheckedBool(IDX_PASSWORD_REMEMBER);
-  settings.AutoFill = IsButtonCheckedBool(IDX_PASSWORD_AUTOFILL);
+  settings.RememberMasterPassword = remember;
+  settings.AutoLockMaster = IsButtonCheckedBool(IDX_PASSWORD_AUTOLOCK);
+  settings.EditByRightClick = IsButtonCheckedBool(IDX_PASSWORD_EDIT_RIGHT);
+  settings.AutoTypeByName = IsButtonCheckedBool(IDX_PASSWORD_AUTOTYPE);
+  settings.PromptToSaveNew = IsButtonCheckedBool(IDX_PASSWORD_PROMPT_SAVE);
   settings.Save();
 
   NExtract::Save_ShowPassword(IsButtonCheckedBool(IDX_PASSWORD_SHOW_DEFAULT));
 
-  // Re-encrypt the vault when the encryption mode or the path changed.
-  const bool pathChanged = (newVaultPath != _oldVaultPath);
+  if (!remember)
+    CPasswordVault::ClearCachedMasterPassword();
+
+  // Re-encrypt the vault when the encryption mode or the location changed.
+  const UString oldPath = _oldVaultPath.IsEmpty() ? CPasswordVault::GetDefaultPath() : fs2us(_oldVaultPath);
+  const UString newPath = pathU.IsEmpty() ? CPasswordVault::GetDefaultPath() : pathU;
+  const bool pathChanged = (newPath != oldPath);
   const bool modeChanged = (newUseMaster != _oldUseMaster);
+
   if (modeChanged || pathChanged)
   {
     UString error;
     CPasswordVault vault;
-    vault.SetPath(_oldVaultPath.IsEmpty() ? CPasswordVault::GetDefaultPath() : _oldVaultPath);
-    if (vault.Load(*this, error))
+    vault.SetPath(oldPath);
+    if (!vault.Load(*this, error))
     {
-      vault.SetPath(newVaultPath.IsEmpty() ? CPasswordVault::GetDefaultPath() : newVaultPath);
-      if (!vault.Save(error))
-        ::MessageBoxW(*this, error, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
+      ErrorBox(*this, error);
     }
-    else if (!error.IsEmpty())
+    else
     {
-      ::MessageBoxW(*this, error, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
+      vault.SetPath(newPath);
+      if (!vault.Save(error))
+      {
+        ErrorBox(*this, error);
+      }
+      else if (pathChanged && FileExists(oldPath))
+      {
+        UString msg = L"密码库已写入新位置：\r\n";
+        msg += newPath;
+        msg += L"\r\n\r\n是否删除旧位置的密码库文件？\r\n";
+        msg += oldPath;
+        if (::MessageBoxW(*this, msg, L"7-Zip 密码管家", MB_ICONQUESTION | MB_YESNO) == IDYES)
+          ::DeleteFileW(oldPath);
+      }
     }
   }
 
-  _oldVaultPath = newVaultPath;
+  _oldVaultPath = us2fs(pathU);
   _oldUseMaster = newUseMaster;
   _needSave = false;
   return PSNRET_NOERROR;
