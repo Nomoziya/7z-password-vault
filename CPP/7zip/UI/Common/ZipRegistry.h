@@ -198,6 +198,7 @@ namespace NPasswordVault
     bool EditByRightClick;       // true = right-click edits a saved entry, false = double-click
     bool AutoTypeByName;         // typing a saved name auto-fills its password
     bool PromptToSaveNew;        // ask to store passwords that are not in the vault yet
+    bool ShowPasswordInList;     // show saved passwords in the list instead of dots
 
     void Save() const;
     void Load();

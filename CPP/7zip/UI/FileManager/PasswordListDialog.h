@@ -33,6 +33,9 @@ class CPasswordListDialog: public NWindows::NControl::CModalDialog
   CPasswordVault *_vault;
   HWND _targetEdit;
   bool _editByRightClick;
+  /* Mask the password column unless the user asked to see the passwords.
+     Filling is unaffected: the entry is read from the vault, not from the cell. */
+  bool _showPasswords;
   bool _changed;
   /* Index whose Delete cell was pressed. The deletion itself runs from a posted
      command, never from the click message itself. */

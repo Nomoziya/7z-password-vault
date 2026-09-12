@@ -609,6 +609,7 @@ static LPCTSTR const kAutoLockMaster = TEXT("AutoLockMaster");
 static LPCTSTR const kEditByRightClick = TEXT("EditByRightClick");
 static LPCTSTR const kAutoTypeByName = TEXT("AutoTypeByName");
 static LPCTSTR const kPromptToSaveNew = TEXT("PromptToSaveNew");
+static LPCTSTR const kShowPasswordInList = TEXT("ShowPasswordInList");
 
 void CInfo::Save() const
 {
@@ -622,6 +623,7 @@ void CInfo::Save() const
   key.SetValue(kEditByRightClick, EditByRightClick);
   key.SetValue(kAutoTypeByName, AutoTypeByName);
   key.SetValue(kPromptToSaveNew, PromptToSaveNew);
+  key.SetValue(kShowPasswordInList, ShowPasswordInList);
 }
 
 void CInfo::Load()
@@ -633,6 +635,7 @@ void CInfo::Load()
   EditByRightClick = false;   // double-click edits by default
   AutoTypeByName = true;      // typing a saved name auto-fills its password
   PromptToSaveNew = true;     // ask before storing a new password
+  ShowPasswordInList = false; // safer default: mask the saved passwords in the list
 
   CS_LOCK
   CKey key;
@@ -648,5 +651,6 @@ void CInfo::Load()
   key.GetValue_bool_IfOk(kEditByRightClick, EditByRightClick);
   key.GetValue_bool_IfOk(kAutoTypeByName, AutoTypeByName);
   key.GetValue_bool_IfOk(kPromptToSaveNew, PromptToSaveNew);
+  key.GetValue_bool_IfOk(kShowPasswordInList, ShowPasswordInList);
 }
 }

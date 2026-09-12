@@ -17,7 +17,10 @@ A modified build of **7-Zip 26.03** with an integrated, encrypted, named passwor
 3. **Saved-passwords window** — a 3 column table (`Name | Password | Delete`):
    - **single click** on the Name or Password cell types that password into the input box;
    - **double click** (or **right click**, per the setting) opens the edit dialog;
-   - **click Delete** removes the row after a confirmation prompt.
+   - **click Delete** removes the row after a confirmation prompt;
+   - the password column shows `********` unless you ask to see the passwords: the
+     **Show passwords** checkbox in the window reveals them, and pressing a masked cell
+     still fills the real password into the input box.
 4. **New password window** — name + password; the name may be left empty and a unique one is generated.
 5. **Auto-type by name** — typing the name of a saved entry in the password box fills its password.
 6. **Offer to save** — entering a password that is not stored yet asks whether to save it.
@@ -58,6 +61,7 @@ so you can compare several entries; the hint line shows which entry was filled.
 | Edit saved passwords with the right mouse button | Right click edits instead of double click |
 | Auto-fill the password when a saved name is typed | Turn off to be asked before filling |
 | Offer to save an unsaved password | Turn off to never be asked to store a new password |
+| Show the saved passwords in the list (otherwise dots) | Reveal the password column by default; the list window also has its own **Show passwords** checkbox |
 | Export vault... / Import vault... | Copy the vault to/from another file |
 
 ### Build
@@ -91,6 +95,7 @@ real mouse input (no test framework needed):
 ```powershell
 pwsh -NoProfile -File tests\ui-test.ps1
 pwsh -NoProfile -File tests\ui-test.ps1 -SevenZipDir "D:\path\to\7-Zip"
+pwsh -NoProfile -File tests\ui-test.ps1 -UiLang en      # against the English UI
 ```
 
 It covers the vault round-trip, the saved-passwords window (pick / edit / delete), auto-typing,
@@ -102,8 +107,10 @@ non-zero when a check fails.
   it crashes. Your real vault in `%APPDATA%\7-Zip` is never read or written.
 * It clicks and types with the **real mouse and keyboard**, so the cursor is taken over for the
   duration of the run.
-* The expected window titles are Chinese, so the 7-Zip UI language must be Chinese. When a window
-  is not found the run prints the titles it did find, to make a language mismatch obvious.
+* Dialog titles come from the language files, so the suite runs against any language this
+  repository ships: `-UiLang auto` (default) follows the 7-Zip `Lang` setting and the system UI
+  language; `-UiLang en` or `-UiLang zh-cn` force one. When a window is not found the run prints
+  the titles it did find, to make a language mismatch obvious.
 * It stops only the `7zFM.exe` it started, so a file manager you have open is not killed.
 
 ### Security
@@ -133,7 +140,9 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 3. **已保存的密码窗口** —— 三列表格（`名称 | 密码 | 删除`）：
    - **单击**名称或密码单元格 → 直接键入到输入框；
    - **双击**（或在设置里改成**右键**）→ 打开修改窗口；
-   - **单击「删除」** → 二次确认后删除该行。
+   - **单击「删除」** → 二次确认后删除该行；
+   - 密码列默认显示为 `********`；窗口里的**「显示密码」**复选框可临时显示明文，
+     单击被遮挡的单元格仍然会把真实密码填入输入框。
 4. **新建密码窗口** —— 填写名称 + 密码；**名称可以留空**，会自动生成一个不重复的名称。
 5. **按名称自动键入** —— 在密码框里输入已保存的名称，自动填入该名称下的密码。
 6. **提示保存** —— 输入密码库里没有的密码时，弹窗询问是否保存到密码库。
@@ -173,6 +182,7 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 | 使用右键编辑已存密码（否则为双击） | 用右键代替双击来修改 |
 | 输入已保存的名称时自动填入密码 | 关闭后改为先询问再填入 |
 | 输入未保存的密码时提示保存 | 关闭后不再询问是否保存新密码 |
+| 在列表中显示已保存的密码（否则显示为圆点） | 默认在列表中显示明文；列表窗口里也有自己的「显示密码」复选框 |
 | 导出密码库... / 导入密码库... | 把密码库复制到 / 从其它文件导入 |
 
 ### 构建
@@ -206,6 +216,7 @@ MSVC（nmake）：使用 `GUI\makefile` 与 `FileManager\makefile`（已链接 `
 ```powershell
 pwsh -NoProfile -File tests\ui-test.ps1
 pwsh -NoProfile -File tests\ui-test.ps1 -SevenZipDir "D:\path\to\7-Zip"
+pwsh -NoProfile -File tests\ui-test.ps1 -UiLang en      # against the English UI
 ```
 
 覆盖：密码库往返、已保存密码窗口（填入 / 修改 / 删除）、自动键入、保存提示、自动命名、
@@ -215,8 +226,9 @@ pwsh -NoProfile -File tests\ui-test.ps1 -SevenZipDir "D:\path\to\7-Zip"
   （即使中途崩溃）整体恢复 `HKCU\Software\7-Zip\PasswordVault` 键。`%APPDATA%\7-Zip`
   下的真实密码库不会被读取或写入。
 * 测试使用**真实鼠标与键盘**输入，运行期间会占用光标。
-* 测试按中文标题查找窗口，因此 7-Zip 界面语言需为中文；找不到窗口时会打印实际存在的
-  窗口标题，便于判断是否为语言不匹配。
+* 窗口标题来自语言文件，支持本仓库提供的所有语言：`-UiLang auto`（默认）跟随 7-Zip 的
+  `Lang` 设置与系统界面语言，`-UiLang en` / `-UiLang zh-cn` 可强制指定；找不到窗口时会打印
+  实际存在的窗口标题，便于判断是否为语言不匹配。
 * 只关闭测试自己启动的 `7zFM.exe`，不会影响你已经打开的窗口。
 
 ### 改动文件

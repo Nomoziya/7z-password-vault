@@ -261,6 +261,8 @@ Type a saved name to fill its password automatically
 Ask to save passwords that are not in the vault
 Export vault...
 Import vault...
+2614
+Show the saved passwords in the list (otherwise dots)
 2900
 About 7-Zip
 7-Zip is free software
@@ -387,6 +389,8 @@ This password is not in the vault yet. Save it now?
 A saved password has this name. Fill in its password?
 3828
 7-Zip Password Vault
+3829
+Show passwords
 3900
 Elapsed time:
 Remaining time:

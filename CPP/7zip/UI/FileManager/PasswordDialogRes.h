@@ -43,3 +43,6 @@
 
 /* caption of every message box the vault shows (localized) */
 #define IDT_PASSWORD_VAULT_CAPTION 3828
+
+/* "show passwords" checkbox inside the saved password list window */
+#define IDX_PASSWORD_LIST_SHOW 3829

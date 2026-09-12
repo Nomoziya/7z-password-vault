@@ -17,6 +17,7 @@ using namespace NWindows;
 static const UInt32 kLangIDs[] =
 {
   IDT_PASSWORD_LIST_HINT,
+  IDX_PASSWORD_LIST_SHOW,
   IDB_PASSWORD_LIST_CLOSE
 };
 #endif
@@ -36,6 +37,10 @@ enum
 {
   kCmdDeleteRow = 3827
 };
+
+/* Shown in the password column while the passwords are masked. A fixed length
+   does not leak how long the stored password is. */
+static const wchar_t * const kMaskedPassword = L"********";
 
 static UString GetLangText(UInt32 langID, const wchar_t *fallback)
 {
@@ -131,6 +136,7 @@ CPasswordListDialog::CPasswordListDialog(CPasswordVault *vault, HWND targetEdit)
     _vault(vault),
     _targetEdit(targetEdit),
     _editByRightClick(false),
+    _showPasswords(false),
     _changed(false),
     _pendingDeleteItem(-1)
 {
@@ -146,6 +152,8 @@ bool CPasswordListDialog::OnInit()
   NPasswordVault::CInfo settings;
   settings.Load();
   _editByRightClick = settings.EditByRightClick;
+  _showPasswords = settings.ShowPasswordInList;
+  CheckButton(IDX_PASSWORD_LIST_SHOW, _showPasswords);
 
   _list.Attach(GetItem(IDL_PASSWORD_LIST));
   _list.SetExtendedListViewStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES,
@@ -175,7 +183,10 @@ void CPasswordListDialog::FillList()
     const int index = _list.InsertItem((unsigned)i, entry.Name);
     if (index >= 0)
     {
-      _list.SetSubItem((unsigned)index, kColValue, entry.Password);
+      /* The password cell is masked unless the user asked to see it. Filling
+         still works: PickItem reads the entry, never the cell text. */
+      _list.SetSubItem((unsigned)index, kColValue,
+          _showPasswords ? entry.Password : UString(kMaskedPassword));
       _list.SetSubItem((unsigned)index, kColDelete, GetLangText(IDT_PASSWORD_COL_DEL, L"删除"));
     }
   }
@@ -193,6 +204,13 @@ void CPasswordListDialog::ShowDefaultHint()
 void CPasswordListDialog::ShowFilledHint(const UString &name)
 {
   UString s = GetLangText(IDT_PASSWORD_LIST_FILLED, L"已填入：");
+  if (!s.IsEmpty())
+  {
+    /* "Filled in:" needs a separating space, "已填入：" must not get one. */
+    const wchar_t c = s.Back();
+    if (c != L' ' && c != L':' && c != L'：')
+      s.Add_Space();
+  }
   s += name;
   SetItemText(IDT_PASSWORD_LIST_HINT, s);
 }
@@ -267,6 +285,13 @@ void CPasswordListDialog::DeleteItem(int index)
 
 bool CPasswordListDialog::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
 {
+  if (buttonID == IDX_PASSWORD_LIST_SHOW)
+  {
+    _showPasswords = IsButtonCheckedBool(IDX_PASSWORD_LIST_SHOW);
+    FillList();
+    /* The window is only a viewer; the setting itself lives in the options. */
+    return true;
+  }
   if (buttonID == kCmdDeleteRow)
   {
     const int index = _pendingDeleteItem;

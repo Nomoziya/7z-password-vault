@@ -30,7 +30,8 @@ static const UInt32 kLangIDs[] =
   IDX_PASSWORD_PROMPT_SAVE,
   IDB_PASSWORD_VAULT_BROWSE,
   IDB_PASSWORD_EXPORT,
-  IDB_PASSWORD_IMPORT
+  IDB_PASSWORD_IMPORT,
+  IDX_PASSWORD_HIDE_LIST
 };
 #endif
 
@@ -93,6 +94,7 @@ bool CPasswordPage::OnInit()
   CheckButton(IDX_PASSWORD_EDIT_RIGHT, settings.EditByRightClick);
   CheckButton(IDX_PASSWORD_AUTOTYPE, settings.AutoTypeByName);
   CheckButton(IDX_PASSWORD_PROMPT_SAVE, settings.PromptToSaveNew);
+  CheckButton(IDX_PASSWORD_HIDE_LIST, settings.ShowPasswordInList);
   CheckButton(IDX_PASSWORD_SHOW_DEFAULT, NExtract::Read_ShowPassword());
 
   _initMode = false;
@@ -335,6 +337,7 @@ bool CPasswordPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
     case IDX_PASSWORD_AUTOLOCK:
     case IDX_PASSWORD_EDIT_RIGHT:
     case IDX_PASSWORD_AUTOTYPE:
+    case IDX_PASSWORD_HIDE_LIST:
     case IDX_PASSWORD_PROMPT_SAVE:
     case IDX_PASSWORD_SHOW_DEFAULT:
       ModifiedEvent();
@@ -374,6 +377,7 @@ LONG CPasswordPage::OnApply()
   settings.EditByRightClick = IsButtonCheckedBool(IDX_PASSWORD_EDIT_RIGHT);
   settings.AutoTypeByName = IsButtonCheckedBool(IDX_PASSWORD_AUTOTYPE);
   settings.PromptToSaveNew = IsButtonCheckedBool(IDX_PASSWORD_PROMPT_SAVE);
+  settings.ShowPasswordInList = IsButtonCheckedBool(IDX_PASSWORD_HIDE_LIST);
   settings.Save();
 
   NExtract::Save_ShowPassword(IsButtonCheckedBool(IDX_PASSWORD_SHOW_DEFAULT));

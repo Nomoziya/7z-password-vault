@@ -10,19 +10,22 @@
 # Because it clicks and types with the real mouse and keyboard, it takes over
 # the cursor for the duration of the run. Do not use the machine while it runs.
 #
-# The expected dialog titles are Chinese, so the 7-Zip UI language must be
-# Chinese (简体中文). If a dialog is not found, the run prints the titles it did
-# find, to make a language mismatch obvious.
+# Dialog titles come from the language files, so the test can run against any
+# supported UI language. -UiLang auto reads the 7-Zip "Lang" setting (and falls
+# back to the system UI language). If a window is not found, the run prints the
+# titles it did find, to make a language mismatch obvious.
 #
 # Usage:
 #   pwsh -File tests\ui-test.ps1
 #   pwsh -File tests\ui-test.ps1 -SevenZipDir "D:\path\to\7-Zip"
+#   pwsh -File tests\ui-test.ps1 -UiLang en
 #   pwsh -File tests\ui-test.ps1 -KeepArtifacts
 #
 # The default target is the packaged build in ..\7-Zip-密码管家版 .
 
 param(
   [string]$SevenZipDir = (Join-Path (Split-Path $PSScriptRoot -Parent) "7-Zip-密码管家版"),
+  [ValidateSet("auto", "zh-cn", "en")][string]$UiLang = "auto",
   [switch]$KeepArtifacts
 )
 
@@ -36,6 +39,33 @@ if (!(Test-Path $fmExe) -or !(Test-Path $szExe)) {
   exit 2
 }
 
+# ---- expected window titles, per UI language ----
+$script:titles = @{
+  "zh-cn" = @{
+    Password = "输入密码"; NewPassword = "新建密码"; EditPassword = "编辑密码"
+    List = "已保存的密码"; Options = "选项"; Caption = "7-Zip 密码管家"
+    Filled = "已填入："; Page = "密码管理"; PageLabel = "密码库位置（留空使用默认）："
+    Untitled = "未命名 1"
+  }
+  "en" = @{
+    Password = "Enter password"; NewPassword = "New password"; EditPassword = "Edit password"
+    List = "Saved passwords"; Options = "Options"; Caption = "7-Zip Password Vault"
+    Filled = "Filled in:"; Page = "Password"; PageLabel = "Vault path (empty = default):"
+    Untitled = "Untitled 1"
+  }
+}
+if ($UiLang -eq "auto") {
+  $regLang = (Get-ItemProperty -Path "HKCU:\Software\7-Zip" -Name Lang -ErrorAction SilentlyContinue).Lang
+  if ($regLang) {
+    $UiLang = if ($regLang -like "en*") { "en" } else { "zh-cn" }
+  } else {
+    # 7-Zip falls back to the system UI language when "Lang" is not set
+    $sysLang = [System.Globalization.CultureInfo]::CurrentUICulture.Name
+    $UiLang = if ($sysLang -like "zh*") { "zh-cn" } else { "en" }
+  }
+}
+$T = $script:titles[$UiLang]
+
 $workDir   = Join-Path $env:TEMP "7zpw_test"
 $archive   = Join-Path $workDir "enc.7z"
 # Isolated vault: the real one lives in %APPDATA%\7-Zip and is never touched.
@@ -43,6 +73,7 @@ $vault     = Join-Path $workDir "test-vault.dat"
 $vaultTmp  = "$vault.tmp"
 $realVault = Join-Path $env:APPDATA "7-Zip\7zPasswordVault.dat"
 $regKey    = "HKCU:\Software\7-Zip\PasswordVault"
+$masked    = "********"      # what the list shows while passwords are hidden
 
 $script:pass = 0
 $script:fail = 0
@@ -180,7 +211,24 @@ public class VaultUiTest {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, IntPtr extra);
+
+  /* A click on a background window is consumed by Windows to activate it, so the
+     real click must wait until the window really is in front. Sleeping a fixed
+     time is not enough: the activation is asynchronous. */
+  public static bool EnsureForeground(IntPtr h, int ms) {
+    IntPtr root = GetAncestor(h, 2 /*GA_ROOT*/);
+    if (root == IntPtr.Zero) root = h;
+    var deadline = DateTime.UtcNow.AddMilliseconds(ms);
+    while (true) {
+      if (GetForegroundWindow() == root) return true;
+      SetForegroundWindow(root);
+      if (DateTime.UtcNow >= deadline) return GetForegroundWindow() == root;
+      System.Threading.Thread.Sleep(50);
+    }
+  }
 
   /* The app is per-monitor DPI aware. A DPI-unaware test process would report the
      dialog in virtualized (scaled-down) coordinates while SetCursorPos works in
@@ -214,8 +262,8 @@ public class VaultUiTest {
     int x = lr.left + 1 + offset + width / 2;
     int y = hr.bottom + 8;
 
-    SetForegroundWindow(listHwnd);
-    System.Threading.Thread.Sleep(200);
+    EnsureForeground(listHwnd, 3000);
+    System.Threading.Thread.Sleep(150);
 
     /* activation click on the header (no action is bound to it) */
     SetCursorPos(lr.left + 100, hr.top + 5);
@@ -223,6 +271,7 @@ public class VaultUiTest {
     mouse_event(0x0002, 0, 0, 0, IntPtr.Zero);
     mouse_event(0x0004, 0, 0, 0, IntPtr.Zero);
     System.Threading.Thread.Sleep(250);
+    EnsureForeground(listHwnd, 1000);
 
     uint down = rightButton ? 0x0008u : 0x0002u;   /* RIGHTDOWN / LEFTDOWN */
     uint up   = rightButton ? 0x0010u : 0x0004u;   /* RIGHTUP   / LEFTUP   */
@@ -383,6 +432,28 @@ function Wait-File([string]$path, [int]$seconds = 5) {
   }
   return (Test-Path $path)
 }
+# Waits for an edit box to reach the expected text. Click driven changes are
+# asynchronous, so a fixed sleep would be a race; this returns what it saw.
+function Wait-EditText([IntPtr]$hwnd, [string]$expected, [int]$seconds = 5) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  $seen = ""
+  while ($true) {
+    $seen = [VaultUiTest]::GetEditText($hwnd)
+    if ($seen -eq $expected) { return $seen }
+    if ((Get-Date) -ge $deadline) { return $seen }
+    Start-Sleep -Milliseconds 100
+  }
+}
+function Wait-ListText([IntPtr]$listHwnd, [int]$row, [int]$col, [string]$expected, [int]$seconds = 5) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  $seen = ""
+  while ($true) {
+    $seen = [VaultUiTest]::GetListText($listHwnd, $row, $col)
+    if ($seen -eq $expected) { return $seen }
+    if ((Get-Date) -ge $deadline) { return $seen }
+    Start-Sleep -Milliseconds 100
+  }
+}
 # Waits until the vault file stops changing, so size comparisons are stable.
 function Wait-FileSize([string]$path, [int]$seconds = 5) {
   $deadline = (Get-Date).AddSeconds($seconds)
@@ -414,13 +485,15 @@ Set-ItemProperty -Path $regKey -Name "UseMasterPassword"  -Value 0 -Type DWord
 Set-ItemProperty -Path $regKey -Name "AutoTypeByName"     -Value 1 -Type DWord
 Set-ItemProperty -Path $regKey -Name "PromptToSaveNew"    -Value 1 -Type DWord
 Set-ItemProperty -Path $regKey -Name "EditByRightClick"   -Value 0 -Type DWord
+Set-ItemProperty -Path $regKey -Name "ShowPasswordInList" -Value 0 -Type DWord   # hidden by default
 Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 Check "the test does not use the real vault" ($vault -ne $realVault)
+Write-Host ("  UI language: {0}" -f $UiLang) -ForegroundColor DarkGray
 
 # ---------------------------------------------------------------- test 1
 Write-Host "`n== 1. save a named password ==" -ForegroundColor Cyan
 $p = Start-Fm $archive
-$dlg = Expect-Dialog ([uint32]$p.Id) "输入密码" "password dialog appears"
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears"
 
 $btnNew  = [VaultUiTest]::FindDescendant($dlg, 3809)
 $btnList = [VaultUiTest]::FindDescendant($dlg, 3808)
@@ -428,7 +501,7 @@ Check "main dialog has 'new password' button" ($btnNew -ne [IntPtr]::Zero)
 Check "main dialog has 'saved passwords' button" ($btnList -ne [IntPtr]::Zero)
 
 [VaultUiTest]::ClickButton($btnNew)
-$ed = Expect-Dialog ([uint32]$p.Id) "新建密码" "new-password dialog appears"
+$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears"
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), "我的密码")
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "Secret123")
 Start-Sleep -Milliseconds 300
@@ -447,7 +520,7 @@ Write-Host "`n== 2. list window: pick / double-click edit ==" -ForegroundColor C
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "")
 Start-Sleep -Milliseconds 200
 [VaultUiTest]::ClickButton($btnList)
-$lst = Expect-Dialog ([uint32]$p.Id) "已保存的密码" "saved passwords window appears"
+$lst = Expect-Dialog ([uint32]$p.Id) $T.List "saved passwords window appears"
 # The body below always runs: a missing window must produce failures, not a
 # silently shorter run.
 $lv = [VaultUiTest]::FindDescendant($lst, 124)
@@ -455,11 +528,11 @@ Check "list control found" ($lv -ne [IntPtr]::Zero)
 Check "list has 1 row" ([VaultUiTest]::SendLong($lv, 0x1004, [IntPtr]::Zero, [IntPtr]::Zero) -eq 1)
 
 [VaultUiTest]::ClickListCell($lv, 1, $false)          # click the Password cell
-Start-Sleep -Milliseconds 800
-Check "single click fills the input box" ([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($dlg,120)) -eq "Secret123")
+$filled = Wait-EditText ([VaultUiTest]::FindDescendant($dlg,120)) "Secret123"
+Check "single click fills the input box" ($filled -eq "Secret123") "(edit=[$filled])"
 
 [VaultUiTest]::ClickListCell($lv, 0, $true)           # double click the Name cell
-$ed2 = Expect-Dialog ([uint32]$p.Id) "编辑密码" "double click opens the edit dialog"
+$ed2 = Expect-Dialog ([uint32]$p.Id) $T.EditPassword "double click opens the edit dialog"
 Check "edit dialog prefilled with the name" ([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($ed2,121)) -eq "我的密码")
 # The password field is an ES_PASSWORD edit and Windows refuses to read it
 # from another process, so the prefill is verified by behaviour instead:
@@ -470,22 +543,23 @@ Check "edit dialog prefilled with the name" ([VaultUiTest]::GetEditText([VaultUi
 Start-Sleep -Milliseconds 300
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed2, 1))   # OK
 Start-Sleep -Seconds 2
-$lst2 = [VaultUiTest]::FindDialog([uint32]$p.Id, "已保存的密码")
+$lst2 = [VaultUiTest]::FindDialog([uint32]$p.Id, $T.List)
 $lv = [VaultUiTest]::FindDescendant($lst2, 124)
 $hint = [VaultUiTest]::FindDescendant($lst2, 3816)
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "")
 Start-Sleep -Milliseconds 200
 [VaultUiTest]::ClickListCell($lv, 1, $false)          # click the Password cell again
-Start-Sleep -Milliseconds 800
-Check "edited entry kept its password (prefill worked)" ([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($dlg,120)) -eq "Secret123")
-Check "edit dialog saved the new name" ([VaultUiTest]::GetEditText($hint) -eq "已填入：改过名的") "(hint=[$([VaultUiTest]::GetEditText($hint))])"
+$filled = Wait-EditText ([VaultUiTest]::FindDescendant($dlg,120)) "Secret123"
+Check "edited entry kept its password (prefill worked)" ($filled -eq "Secret123") "(edit=[$filled])"
+$hintText = [VaultUiTest]::GetEditText($hint)
+Check "edit dialog saved the new name" ($hintText.StartsWith($T.Filled) -and $hintText.EndsWith("改过名的")) "(hint=[$hintText])"
 Check "process alive after list interactions" (-not $p.HasExited)
 
 # ---------------------------------------------------------------- test 3
 Write-Host "`n== 3. delete from the Delete column ==" -ForegroundColor Cyan
 $sizeBefore = Wait-FileSize $vault
 [VaultUiTest]::ClickListCell($lv, 2, $false)          # click the Delete cell
-$cf = Expect-Dialog ([uint32]$p.Id) "7-Zip 密码管家" "delete asks for confirmation"
+$cf = Expect-Dialog ([uint32]$p.Id) $T.Caption "delete asks for confirmation"
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($cf, 6))  # IDYES
 Start-Sleep -Seconds 2
 $lv = [VaultUiTest]::FindDescendant($lst, 124)
@@ -498,9 +572,9 @@ Stop-Fm $p
 Write-Host "`n== 4. auto-type a saved password by typing its name ==" -ForegroundColor Cyan
 Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 $p = Start-Fm $archive
-$dlg = Expect-Dialog ([uint32]$p.Id) "输入密码" "password dialog appears (auto-type)"
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (auto-type)"
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) "新建密码" "new-password dialog appears (auto-type)"
+$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears (auto-type)"
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), "abc")
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "PwForAbc")
 Start-Sleep -Milliseconds 300
@@ -525,9 +599,9 @@ foreach ($k in $cases.Keys) {
   Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
   [IO.File]::WriteAllBytes($vault, $cases[$k])
   $p = Start-Fm $archive
-  $err = Wait-Dialog ([uint32]$p.Id) "7-Zip 密码管家" 8
+  $err = Wait-Dialog ([uint32]$p.Id) $T.Caption 8
   if ($err -ne [IntPtr]::Zero) { [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($err,1)); Start-Sleep -Milliseconds 500 }
-  $pw = Wait-Dialog ([uint32]$p.Id) "输入密码" 8
+  $pw = Wait-Dialog ([uint32]$p.Id) $T.Password 8
   Check "$k -> error shown, dialog usable, no crash" (($err -ne [IntPtr]::Zero) -and ($pw -ne [IntPtr]::Zero) -and (-not $p.HasExited))
   if ($err -eq [IntPtr]::Zero -or $pw -eq [IntPtr]::Zero) {
     Write-Host ("      dialogs present: " + (([VaultUiTest]::ListDialogs([uint32]$p.Id) | ForEach-Object { "[$_]" }) -join " ")) -ForegroundColor DarkGray
@@ -540,11 +614,11 @@ Write-Host "`n== 6. unnamed entry / right-click edit mode ==" -ForegroundColor C
 Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $regKey -Name "EditByRightClick" -Value 1 -Type DWord
 $p = Start-Fm $archive
-$dlg = Expect-Dialog ([uint32]$p.Id) "输入密码" "password dialog appears (right-click mode)"
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (right-click mode)"
 
 # "New password" with an empty name: a name must be generated for the user
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) "新建密码" "new-password dialog appears without a name"
+$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears without a name"
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "AutoNamed")
 Start-Sleep -Milliseconds 300
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
@@ -554,21 +628,23 @@ Check "unnamed entry still fills the input box" ([VaultUiTest]::GetEditText([Vau
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "")
 Start-Sleep -Milliseconds 200
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3808))
-$lst = Expect-Dialog ([uint32]$p.Id) "已保存的密码" "saved passwords window appears (right-click mode)"
+$lst = Expect-Dialog ([uint32]$p.Id) $T.List "saved passwords window appears (right-click mode)"
 $lv = [VaultUiTest]::FindDescendant($lst, 124)
 $name0 = [VaultUiTest]::GetListText($lv, 0, 0)
-Check "unnamed entry got a generated name" ($name0 -eq "未命名 1") "(got [$name0])"
+Check "unnamed entry got a generated name" ($name0 -eq $T.Untitled) "(got [$name0])"
+# ShowPasswordInList=0 masks the password column
+Check "the password column is masked by default" ([VaultUiTest]::GetListText($lv, 0, 1) -eq $masked) "(got [$([VaultUiTest]::GetListText($lv, 0, 1))])"
 
 # with EditByRightClick=1 a right click must edit ...
 [VaultUiTest]::ClickListCell($lv, 0, $false, $true)
-$ed3 = Expect-Dialog ([uint32]$p.Id) "编辑密码" "right click opens the edit dialog (setting on)"
+$ed3 = Expect-Dialog ([uint32]$p.Id) $T.EditPassword "right click opens the edit dialog (setting on)"
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed3, 2))   # Cancel
 Start-Sleep -Seconds 1
 # ... and a double click must not
 [VaultUiTest]::ClickListCell($lv, 1, $true)
-[void](Assert-NoDialog ([uint32]$p.Id) "编辑密码" "double click does not edit when the setting is on" 3)
+[void](Assert-NoDialog ([uint32]$p.Id) $T.EditPassword "double click does not edit when the setting is on" 3)
 # ... but it still types the password into the input box
-Check "double click still fills the input box" ([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($dlg,120)) -eq "AutoNamed")
+Check "double click still fills the input box" ((Wait-EditText ([VaultUiTest]::FindDescendant($dlg,120)) "AutoNamed") -eq "AutoNamed")
 Check "process alive after right-click mode" (-not $p.HasExited)
 Stop-Fm $p
 
@@ -578,14 +654,14 @@ Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $regKey -Name "EditByRightClick"    -Value 0 -Type DWord
 Set-ItemProperty -Path $regKey -Name "PromptToSaveNew"     -Value 1 -Type DWord
 $p = Start-Fm $archive
-$dlg = Expect-Dialog ([uint32]$p.Id) "输入密码" "password dialog appears (save prompt)"
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (save prompt)"
 # a password the vault does not know: pressing OK must offer to store it
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "BrandNewPw")
 Start-Sleep -Milliseconds 300
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 1))   # OK
-$ask = Expect-Dialog ([uint32]$p.Id) "7-Zip 密码管家" "unknown password asks whether to save it"
+$ask = Expect-Dialog ([uint32]$p.Id) $T.Caption "unknown password asks whether to save it"
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ask, 6))   # IDYES
-$ed = Expect-Dialog ([uint32]$p.Id) "新建密码" "saving an unknown password opens the name dialog"
+$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "saving an unknown password opens the name dialog"
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), "from-prompt")
 Start-Sleep -Milliseconds 300
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
@@ -597,13 +673,23 @@ Stop-Fm $p
 # restart, and read the row back out of the saved-passwords window. This also
 # checks that the entry survived a save/reload round trip.
 $p = Start-Fm $archive
-$dlg = Expect-Dialog ([uint32]$p.Id) "输入密码" "password dialog appears again (prompt result)"
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears again (prompt result)"
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3808))
-$lst = Expect-Dialog ([uint32]$p.Id) "已保存的密码" "the prompted password is in the vault"
+$lst = Expect-Dialog ([uint32]$p.Id) $T.List "the prompted password is in the vault"
 $lv = [VaultUiTest]::FindDescendant($lst, 124)
 Check "the prompted password is stored under the given name" ([VaultUiTest]::GetListText($lv, 0, 0) -eq "from-prompt") "(row 0 name=[$([VaultUiTest]::GetListText($lv, 0, 0))])"
-Check "the prompted password is the one that was typed" ([VaultUiTest]::GetListText($lv, 0, 1) -eq "BrandNewPw") "(row 0 value=[$([VaultUiTest]::GetListText($lv, 0, 1))])"
 Check "the vault holds exactly that one entry" ([VaultUiTest]::SendLong($lv, 0x1004, [IntPtr]::Zero, [IntPtr]::Zero) -eq 1)
+# The password is hidden by default ...
+Check "the password is hidden in the list" ([VaultUiTest]::GetListText($lv, 0, 1) -eq $masked) "(got [$([VaultUiTest]::GetListText($lv, 0, 1))])"
+# ... but clicking the masked cell must still fill the real password
+[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "")
+Start-Sleep -Milliseconds 200
+[VaultUiTest]::ClickListCell($lv, 1, $false)
+Check "clicking a masked cell still fills the real password" ((Wait-EditText ([VaultUiTest]::FindDescendant($dlg,120)) "BrandNewPw") -eq "BrandNewPw")
+# ... and the "show passwords" checkbox in the list window reveals it
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3829))
+$revealed = Wait-ListText $lv 0 1 "BrandNewPw"
+Check "the show-passwords checkbox reveals the password" ($revealed -eq "BrandNewPw") "(got [$revealed])"
 Stop-Fm $p
 
 # ---------------------------------------------------------------- test 8
@@ -611,11 +697,11 @@ Write-Host "`n== 8. the offer can be switched off ==" -ForegroundColor Cyan
 Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $regKey -Name "PromptToSaveNew" -Value 0 -Type DWord
 $p = Start-Fm $archive
-$dlg = Expect-Dialog ([uint32]$p.Id) "输入密码" "password dialog appears (prompt off)"
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (prompt off)"
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "SilentPw")
 Start-Sleep -Milliseconds 300
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 1))
-[void](Assert-NoDialog ([uint32]$p.Id) "7-Zip 密码管家" "no offer when the setting is off" 3)
+[void](Assert-NoDialog ([uint32]$p.Id) $T.Caption "no offer when the setting is off" 3)
 Check "no vault file is written" (-not (Test-Path $vault))
 Check "process alive" (-not $p.HasExited)
 Stop-Fm $p
@@ -631,25 +717,25 @@ while ((Get-Date) -lt $deadline -and $fmWnd -eq [IntPtr]::Zero) {
 }
 Check "file manager window found" ($fmWnd -ne [IntPtr]::Zero)
 [void][VaultUiTest]::PostMessageW($fmWnd, 0x0111, [IntPtr]900, [IntPtr]::Zero)   # WM_COMMAND IDM_OPTIONS
-$opt = Expect-Dialog ([uint32]$p.Id) "选项" "options dialog opens" 10
+$opt = Expect-Dialog ([uint32]$p.Id) $T.Options "options dialog opens" 10
 $tab = [VaultUiTest]::FindDescendant($opt, 12320)
 $count = [VaultUiTest]::GetTabCount($tab)
 $titles = @()
 for ($i = 0; $i -lt $count; $i++) { $titles += [VaultUiTest]::GetTabText($tab, $i) }
-Check "password page is registered" ($titles -contains "密码管理") "(tabs: $($titles -join ' | '))"
-$idx = [array]::IndexOf($titles, "密码管理")
+Check "password page is registered" ($titles -contains $T.Page) "(tabs: $($titles -join ' | '))"
+$idx = [array]::IndexOf($titles, $T.Page)
 if ($idx -ge 0) {
   [VaultUiTest]::MoveCursorHome()
   [void][VaultUiTest]::ClickTab($tab, $idx)
   Start-Sleep -Seconds 2
 }
-$ids = @(2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611,2612,2613)
+$ids = @(2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611,2612,2613,2614)
 $missing = @()
 foreach ($id in $ids) {
   if ([VaultUiTest]::FindDescendant($opt, $id) -eq [IntPtr]::Zero) { $missing += $id }
 }
 Check "password page controls present" ($missing.Count -eq 0) "(missing: $($missing -join ','))"
-Check "password page is localized" ([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($opt, 2601)) -eq "密码库位置（留空使用默认）：") "(got [$([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($opt, 2601)))])"
+Check "password page is localized" ([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($opt, 2601)) -eq $T.PageLabel) "(got [$([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($opt, 2601)))])"
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($opt, 2))   # Cancel
 Start-Sleep -Seconds 1
 Check "process alive after settings" (-not $p.HasExited)
