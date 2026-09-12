@@ -93,7 +93,6 @@ void CPasswordPage::OnSetMasterPassword()
       ::MessageBoxW(*this, error, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
     return;
   }
-
   UString pw1, pw2;
   if (!CPasswordVault::PromptForMasterPassword(*this, pw1, error))
     return;

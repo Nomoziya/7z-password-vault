@@ -100,11 +100,19 @@ static UString GetVaultFolderPath()
 static void EnsureFolderExists(const UString &filePath)
 {
   const int pos = filePath.ReverseFind_PathSepar();
-  if (pos > 0)
-  {
-    const UString dir = filePath.Left((unsigned)pos);
-    ::CreateDirectoryW(dir, NULL);
-  }
+  if (pos <= 0)
+    return;
+
+  const UString dir = filePath.Left((unsigned)pos);
+
+  /* For a path like "D:\file.dat" dir is "D:". That is a drive-relative path,
+     not a directory, and CreateDirectoryW would fail on it. The drive root
+     always exists, so nothing has to be created. */
+  const wchar_t *p = dir.Ptr();
+  if (dir.Len() == 2 && p[1] == L':')
+    return;
+
+  ::CreateDirectoryW(dir, NULL);
 }
 
 static bool WriteBuf(COutFile &f, const void *data, size_t size)
@@ -286,7 +294,9 @@ bool CPasswordVault::PromptForMasterPassword(HWND parent, UString &password, USt
   CPasswordMasterDialog dialog;
   if (dialog.Create(parent) != IDOK)
   {
-    errorMessage = L"Master password was not entered";
+    /* The user cancelled. Leave errorMessage empty so that callers can tell
+       "cancelled" from a real failure and stay silent about it. */
+    errorMessage.Empty();
     return false;
   }
   password = dialog.Password;
@@ -346,21 +356,21 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
   char magic[4];
   if (!ReadBuf(f, magic, 4) || memcmp(magic, kMagic, 4) != 0)
   {
-    errorMessage = L"Invalid vault file header";
+    errorMessage = L"密码库文件头无效";
     return false;
   }
 
   Byte version = 0;
   if (!ReadBuf(f, &version, 1) || version != kVersion)
   {
-    errorMessage = L"Unsupported vault file version";
+    errorMessage = L"不支持的密码库版本";
     return false;
   }
 
   Byte flags = 0;
   if (!ReadBuf(f, &flags, 1))
   {
-    errorMessage = L"Invalid vault file";
+    errorMessage = L"密码库文件已损坏或无效";
     return false;
   }
 
@@ -381,7 +391,7 @@ bool CPasswordVault::Save(UString &errorMessage)
     COutFile f;
     if (!f.Create_ALWAYS(tmpPath))
     {
-      errorMessage = L"Cannot create vault file";
+      errorMessage = L"无法创建密码库文件";
       return false;
     }
 
@@ -399,7 +409,7 @@ bool CPasswordVault::Save(UString &errorMessage)
     }
 
     if (!ok && errorMessage.IsEmpty())
-      errorMessage = L"Cannot write vault file";
+      errorMessage = L"无法写入密码库文件";
 
     f.Close();
 
@@ -412,7 +422,7 @@ bool CPasswordVault::Save(UString &errorMessage)
 
   if (!::MoveFileExW(tmpPath, _path, MOVEFILE_REPLACE_EXISTING))
   {
-    errorMessage = L"Cannot replace vault file";
+    errorMessage = L"无法替换密码库文件";
     ::DeleteFileW(tmpPath);
     return false;
   }
@@ -443,7 +453,7 @@ bool CPasswordVault::ParseEntries(const Byte *data, size_t size, UString &errorM
   UInt32 count = 0;
   if (!ReadUInt32Mem(data, size, pos, count))
   {
-    errorMessage = L"Invalid vault data";
+    errorMessage = L"密码库数据已损坏";
     return false;
   }
 
@@ -452,7 +462,7 @@ bool CPasswordVault::ParseEntries(const Byte *data, size_t size, UString &errorM
     UInt32 nameBytes = 0;
     if (!ReadUInt32Mem(data, size, pos, nameBytes) || (nameBytes & 1) != 0 || pos + nameBytes > size)
     {
-      errorMessage = L"Invalid vault data";
+      errorMessage = L"密码库数据已损坏";
       return false;
     }
 
@@ -470,7 +480,7 @@ bool CPasswordVault::ParseEntries(const Byte *data, size_t size, UString &errorM
     UInt32 passBytes = 0;
     if (!ReadUInt32Mem(data, size, pos, passBytes) || (passBytes & 1) != 0 || pos + passBytes > size)
     {
-      errorMessage = L"Invalid vault data";
+      errorMessage = L"密码库数据已损坏";
       return false;
     }
 
@@ -499,7 +509,7 @@ bool CPasswordVault::Load_DPAPI(CInFile &f, UString &errorMessage)
   UInt32 count = 0;
   if (!ReadUInt32(f, count) || count > kMaxEntries)
   {
-    errorMessage = L"Invalid vault file";
+    errorMessage = L"密码库文件已损坏或无效";
     return false;
   }
 
@@ -510,14 +520,14 @@ bool CPasswordVault::Load_DPAPI(CInFile &f, UString &errorMessage)
     UInt32 nameBytes = 0;
     if (!ReadUInt32(f, nameBytes) || (nameBytes & 1) != 0 || nameBytes > kMaxNameBytes)
     {
-      errorMessage = L"Invalid vault entry";
+      errorMessage = L"密码库条目已损坏";
       return false;
     }
     {
       CByteBuffer nameBuf(nameBytes);
       if (nameBytes != 0 && !ReadBuf(f, nameBuf, nameBytes))
       {
-        errorMessage = L"Invalid vault entry";
+        errorMessage = L"密码库条目已损坏";
         return false;
       }
       const unsigned charCount = nameBytes / 2;
@@ -531,26 +541,26 @@ bool CPasswordVault::Load_DPAPI(CInFile &f, UString &errorMessage)
     UInt32 blobSize = 0;
     if (!ReadUInt32(f, blobSize) || blobSize > kMaxBlobSize)
     {
-      errorMessage = L"Invalid vault entry";
+      errorMessage = L"密码库条目已损坏";
       return false;
     }
     {
       CByteBuffer blob(blobSize);
       if (blobSize != 0 && !ReadBuf(f, blob, blobSize))
       {
-        errorMessage = L"Invalid vault entry";
+        errorMessage = L"密码库条目已损坏";
         return false;
       }
 
       CByteBuffer plain;
       if (!DpapiUnprotect((const Byte *)blob, blobSize, plain))
       {
-        errorMessage = L"Decryption failed (different user or machine)";
+        errorMessage = L"解密失败（可能不是同一个 Windows 账户或电脑）";
         return false;
       }
       if ((plain.Size() & 1) != 0)
       {
-        errorMessage = L"Invalid password data";
+        errorMessage = L"密码数据无效";
         return false;
       }
       const unsigned charCount = (unsigned)(plain.Size() / 2);
@@ -580,14 +590,14 @@ bool CPasswordVault::Load_Master(HWND parent, CInFile &f, UString &errorMessage)
       iterations < kMinIterations || iterations > kMaxIterations ||
       cipherLen > kMaxCipherSize)
   {
-    errorMessage = L"Invalid vault file";
+    errorMessage = L"密码库文件已损坏或无效";
     return false;
   }
 
   CByteBuffer cipher(cipherLen);
   if (cipherLen != 0 && !ReadBuf(f, cipher, cipherLen))
   {
-    errorMessage = L"Invalid vault file";
+    errorMessage = L"密码库文件已损坏或无效";
     return false;
   }
 
@@ -599,7 +609,7 @@ bool CPasswordVault::Load_Master(HWND parent, CInFile &f, UString &errorMessage)
   if (!DeriveKey(master, salt, kSaltSize, iterations, key))
   {
     SecureWipeString(master);
-    errorMessage = L"Key derivation failed";
+    errorMessage = L"密钥派生失败";
     return false;
   }
 
@@ -610,7 +620,7 @@ bool CPasswordVault::Load_Master(HWND parent, CInFile &f, UString &errorMessage)
   SecureWipeString(master);
   if (!decOk)
   {
-    errorMessage = L"Wrong master password or corrupted vault file";
+    errorMessage = L"主密码错误，或密码库文件已损坏";
     return false;
   }
 
@@ -626,7 +636,7 @@ bool CPasswordVault::Save_DPAPI(COutFile &f, UString &errorMessage)
   const UInt32 count = (UInt32)_entries.Size();
   if (!WriteUInt32(f, count))
   {
-    errorMessage = L"Cannot write vault file";
+    errorMessage = L"无法写入密码库文件";
     return false;
   }
 
@@ -637,12 +647,12 @@ bool CPasswordVault::Save_DPAPI(COutFile &f, UString &errorMessage)
     const UInt32 nameBytes = (UInt32)(entry.Name.Len() * 2);
     if (!WriteUInt32(f, nameBytes))
     {
-      errorMessage = L"Cannot write vault file";
+      errorMessage = L"无法写入密码库文件";
       return false;
     }
     if (nameBytes != 0 && !WriteBuf(f, (const void *)(const wchar_t *)entry.Name, nameBytes))
     {
-      errorMessage = L"Cannot write vault file";
+      errorMessage = L"无法写入密码库文件";
       return false;
     }
 
@@ -650,13 +660,13 @@ bool CPasswordVault::Save_DPAPI(COutFile &f, UString &errorMessage)
     if (!DpapiProtect((const void *)(const wchar_t *)entry.Password,
         (size_t)entry.Password.Len() * 2, blob))
     {
-      errorMessage = L"Encryption failed";
+      errorMessage = L"加密失败";
       return false;
     }
     const UInt32 blobSize = (UInt32)blob.Size();
     if (!WriteUInt32(f, blobSize) || (blobSize != 0 && !WriteBuf(f, (const Byte *)blob, blobSize)))
     {
-      errorMessage = L"Cannot write vault file";
+      errorMessage = L"无法写入密码库文件";
       return false;
     }
   }
@@ -674,7 +684,7 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage)
   Byte iv[kIvSize];
   if (!GenRandom(salt, kSaltSize) || !GenRandom(iv, kIvSize))
   {
-    errorMessage = L"Random generation failed";
+    errorMessage = L"随机数生成失败";
     return false;
   }
 
@@ -682,7 +692,7 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage)
   if (!DeriveKey(master, salt, kSaltSize, kPbkdf2Iterations, key))
   {
     SecureWipeString(master);
-    errorMessage = L"Key derivation failed";
+    errorMessage = L"密钥派生失败";
     return false;
   }
   SecureWipeString(master);
@@ -698,7 +708,7 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage)
   plain.Wipe();
   if (!encOk)
   {
-    errorMessage = L"Encryption failed";
+    errorMessage = L"加密失败";
     return false;
   }
 
@@ -709,7 +719,7 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage)
       !WriteUInt32(f, (UInt32)plain.Size()) ||
       !WriteBuf(f, (const Byte *)cipher, plain.Size()))
   {
-    errorMessage = L"Cannot write vault file";
+    errorMessage = L"无法写入密码库文件";
     return false;
   }
 

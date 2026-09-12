@@ -28,6 +28,10 @@ static const UInt32 kNameDialogLangIDs[] =
 
 static void VaultErrorMessage(HWND wnd, const UString &message)
 {
+  // An empty message means the user cancelled a master-password prompt,
+  // which is not an error worth reporting.
+  if (message.IsEmpty())
+    return;
   ::MessageBoxW(wnd, message, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
 }
 
@@ -88,7 +92,14 @@ void CPasswordDialog::SaveCurrentPassword()
 
   int index = _vault.FindByName(name);
   if (index >= 0)
+  {
+    UString message = L"已存在名为“";
+    message += name;
+    message += L"”的密码，是否覆盖？";
+    if (::MessageBoxW(*this, message, L"7-Zip 密码管家", MB_ICONQUESTION | MB_YESNO) != IDYES)
+      return;
     _vault.Entries()[(unsigned)index].Password = Password;
+  }
   else
   {
     CPasswordVaultEntry entry;
@@ -155,7 +166,8 @@ bool CPasswordDialog::OnInit()
   settings.Load();
 
   // Auto-fill the only saved password when enabled.
-  if (settings.AutoFill && _vault.Entries().Size() == 1)
+  // Don't overwrite a password that the caller already put into the dialog.
+  if (settings.AutoFill && Password.IsEmpty() && _vault.Entries().Size() == 1)
   {
     _savedCombo.SetCurSel(0);
     Password = _vault.Entries()[0].Password;
