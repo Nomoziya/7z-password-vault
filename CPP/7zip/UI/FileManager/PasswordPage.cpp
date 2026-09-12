@@ -38,12 +38,12 @@ static void ErrorBox(HWND wnd, const UString &message)
 {
   if (message.IsEmpty())
     return;
-  ::MessageBoxW(wnd, message, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
+  ::MessageBoxW(wnd, message, PasswordVault_GetCaption(), MB_ICONERROR | MB_OK);
 }
 
 static void InfoBox(HWND wnd, const UString &message)
 {
-  ::MessageBoxW(wnd, message, L"7-Zip 密码管家", MB_ICONINFORMATION | MB_OK);
+  ::MessageBoxW(wnd, message, PasswordVault_GetCaption(), MB_ICONINFORMATION | MB_OK);
 }
 
 static bool FileExists(const UString &path)
@@ -133,12 +133,12 @@ void CPasswordPage::OnSetMasterPassword()
 
   if (pw1.IsEmpty())
   {
-    ::MessageBoxW(*this, L"主密码不能为空。", L"7-Zip 密码管家", MB_ICONWARNING | MB_OK);
+    ::MessageBoxW(*this, L"主密码不能为空。", PasswordVault_GetCaption(), MB_ICONWARNING | MB_OK);
     return;
   }
   if (pw1 != pw2)
   {
-    ::MessageBoxW(*this, L"两次输入的密码不一致。", L"7-Zip 密码管家", MB_ICONWARNING | MB_OK);
+    ::MessageBoxW(*this, L"两次输入的密码不一致。", PasswordVault_GetCaption(), MB_ICONWARNING | MB_OK);
     return;
   }
 
@@ -181,7 +181,7 @@ void CPasswordPage::OnClearMasterPassword()
   if (::MessageBoxW(*this,
       L"确定要清除主密码吗？\n\n清除后将改用 Windows 凭据（DPAPI）加密，"
       L"密码库只能在本机本账户下解密。",
-      L"7-Zip 密码管家", MB_ICONQUESTION | MB_YESNO) != IDYES)
+      PasswordVault_GetCaption(), MB_ICONQUESTION | MB_YESNO) != IDYES)
     return;
 
   {
@@ -409,7 +409,7 @@ LONG CPasswordPage::OnApply()
         msg += newPath;
         msg += L"\r\n\r\n是否删除旧位置的密码库文件？\r\n";
         msg += oldPath;
-        if (::MessageBoxW(*this, msg, L"7-Zip 密码管家", MB_ICONQUESTION | MB_YESNO) == IDYES)
+        if (::MessageBoxW(*this, msg, PasswordVault_GetCaption(), MB_ICONQUESTION | MB_YESNO) == IDYES)
           ::DeleteFileW(oldPath);
       }
     }

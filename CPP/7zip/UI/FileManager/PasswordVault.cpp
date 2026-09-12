@@ -42,6 +42,18 @@ static const UInt32 kMinIterations = 1000;
 static const UInt32 kMaxIterations = 10000000;
 static const UInt32 kMaxEntries = 100000;
 
+UString PasswordVault_GetCaption()
+{
+  #ifdef Z7_LANG
+  {
+    const UString s = LangString(IDT_PASSWORD_VAULT_CAPTION);
+    if (!s.IsEmpty())
+      return s;
+  }
+  #endif
+  return UString(L"7-Zip 密码管家");
+}
+
 // ---------------------------------------------------------------------------
 // master password session cache
 

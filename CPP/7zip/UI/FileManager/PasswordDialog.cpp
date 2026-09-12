@@ -44,7 +44,7 @@ static void VaultErrorMessage(HWND wnd, const UString &message)
   // which is not an error worth reporting.
   if (message.IsEmpty())
     return;
-  ::MessageBoxW(wnd, message, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
+  ::MessageBoxW(wnd, message, PasswordVault_GetCaption(), MB_ICONERROR | MB_OK);
 }
 
 UString PasswordVault_MakeDefaultName(const CPasswordVault &vault)
@@ -156,7 +156,7 @@ void CPasswordDialog::OnPasswordTextChanged()
     UString message = GetLangText(IDT_PASSWORD_AUTOTYPE_Q, L"");
     message += L"\r\n\r\n";
     message += text;
-    useIt = (::MessageBoxW(*this, message, L"7-Zip 密码管家",
+    useIt = (::MessageBoxW(*this, message, PasswordVault_GetCaption(),
         MB_ICONQUESTION | MB_YESNO) == IDYES);
   }
 
@@ -241,7 +241,7 @@ void CPasswordDialog::MaybeOfferToSave()
   }
 
   if (::MessageBoxW(*this, GetLangText(IDT_PASSWORD_SAVE_NEW_Q, L""),
-      L"7-Zip 密码管家", MB_ICONQUESTION | MB_YESNO) != IDYES)
+      PasswordVault_GetCaption(), MB_ICONQUESTION | MB_YESNO) != IDYES)
     return;
 
   CPasswordEditDialog dialog(true);

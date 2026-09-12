@@ -24,6 +24,11 @@ A modified build of **7-Zip 26.03** with an integrated, encrypted, named passwor
 7. **Password management settings page** — 7-Zip "Tools → Options" gains a new "Password manager" page.
 8. **Localized UI** — every new dialog and option is localized (English / 简体中文 / 繁體中文 included).
 
+> The file manager loads its language file as `Lang\<lang>.txt` and never `.ttt`, so an English
+> UI needs `Lang\en.txt` (a copy of the `en.ttt` template, which this repository ships). Without
+> it, English falls back to the built-in resource strings and every string that only exists in the
+> language file — the vault message boxes, list hint, prompts — would show its Chinese fallback.
+
 ### Saved-passwords window
 
 Open it with the **Saved passwords...** button in the password dialog. It stays open while you pick,
@@ -92,6 +97,15 @@ It covers the vault round-trip, the saved-passwords window (pick / edit / delete
 the save prompt, the generated name, the settings page and a set of corrupt-vault files. It exits
 non-zero when a check fails.
 
+* The run is **isolated from your own data**: it points `VaultPath` at a file inside its work
+  directory and restores the whole `HKCU\Software\7-Zip\PasswordVault` key afterwards, also when
+  it crashes. Your real vault in `%APPDATA%\7-Zip` is never read or written.
+* It clicks and types with the **real mouse and keyboard**, so the cursor is taken over for the
+  duration of the run.
+* The expected window titles are Chinese, so the 7-Zip UI language must be Chinese. When a window
+  is not found the run prints the titles it did find, to make a language mismatch obvious.
+* It stops only the `7zFM.exe` it started, so a file manager you have open is not killed.
+
 ### Security
 
 - DPAPI mode: decryptable only by the current Windows account on the current machine. Entry names
@@ -125,6 +139,10 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 6. **提示保存** —— 输入密码库里没有的密码时，弹窗询问是否保存到密码库。
 7. **密码管理设置页** —— 7-Zip「工具 → 选项」新增「密码管理」页。
 8. **多语言** —— 新增对话框与选项均已本地化（英文 / 简体中文 / 繁体中文）。
+
+> 文件管理器只加载 `Lang\<语言>.txt`，**不会加载 `.ttt`**。因此英文界面需要 `Lang\en.txt`
+> （即 `en.ttt` 模板的副本，本仓库已提供）。缺少它时英文会退回内置资源字符串，而只存在于
+> 语言文件里的字符串（密码库消息框、列表提示、各种询问）会退回中文兜底文本。
 
 ### 已保存的密码窗口
 
@@ -193,6 +211,14 @@ pwsh -NoProfile -File tests\ui-test.ps1 -SevenZipDir "D:\path\to\7-Zip"
 覆盖：密码库往返、已保存密码窗口（填入 / 修改 / 删除）、自动键入、保存提示、自动命名、
 设置页、以及一组损坏的密码库文件（必须报错且不崩溃）。有失败项时以非零码退出。
 
+* 测试与**你自己的数据完全隔离**：它把 `VaultPath` 指向自己工作目录下的文件，并在结束后
+  （即使中途崩溃）整体恢复 `HKCU\Software\7-Zip\PasswordVault` 键。`%APPDATA%\7-Zip`
+  下的真实密码库不会被读取或写入。
+* 测试使用**真实鼠标与键盘**输入，运行期间会占用光标。
+* 测试按中文标题查找窗口，因此 7-Zip 界面语言需为中文；找不到窗口时会打印实际存在的
+  窗口标题，便于判断是否为语言不匹配。
+* 只关闭测试自己启动的 `7zFM.exe`，不会影响你已经打开的窗口。
+
 ### 改动文件
 
 | 文件 | 说明 |
@@ -207,7 +233,7 @@ pwsh -NoProfile -File tests\ui-test.ps1 -SevenZipDir "D:\path\to\7-Zip"
 | `CPP/7zip/UI/GUI/makefile` / `makefile.gcc` | 修改：GUI 构建文件（链接 bcrypt） |
 | `CPP/7zip/UI/FileManager/FM.mak` / `makefile.gcc` | 修改：FM 构建文件（链接 bcrypt） |
 | `CPP/7zip/7zip_gcc.mak` | 修改：新增编译规则、链接 bcrypt、**头文件依赖跟踪（-MMD -MP）** |
-| `Lang/en.ttt` / `zh-cn.txt` / `zh-tw.txt` | 修改：新增界面字符串本地化 |
+| `Lang/en.ttt` / `en.txt` / `zh-cn.txt` / `zh-tw.txt` | 修改：新增界面字符串本地化（`en.txt` 为英文界面实际加载的文件） |
 | `tests/ui-test.ps1` | 新增：UI 冒烟测试 |
 
 ### 开发注意（重要）

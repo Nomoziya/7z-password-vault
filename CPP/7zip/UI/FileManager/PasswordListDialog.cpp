@@ -51,7 +51,7 @@ static void VaultErrorMessage(HWND wnd, const UString &message)
 {
   if (message.IsEmpty())
     return;
-  ::MessageBoxW(wnd, message, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
+  ::MessageBoxW(wnd, message, PasswordVault_GetCaption(), MB_ICONERROR | MB_OK);
 }
 
 // ---- subclassed list view ----
@@ -249,7 +249,7 @@ void CPasswordListDialog::DeleteItem(int index)
   message += L"\r\n\r\n";
   message += _vault->Entries()[(unsigned)index].Name;
 
-  if (::MessageBoxW(*this, message, L"7-Zip 密码管家", MB_ICONQUESTION | MB_YESNO) != IDYES)
+  if (::MessageBoxW(*this, message, PasswordVault_GetCaption(), MB_ICONQUESTION | MB_YESNO) != IDYES)
     return;
 
   _vault->Entries().Delete((unsigned)index);

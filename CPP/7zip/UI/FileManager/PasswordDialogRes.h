@@ -40,3 +40,6 @@
 #define IDT_PASSWORD_DEFAULT_NAME  3824
 #define IDT_PASSWORD_SAVE_NEW_Q    3825
 #define IDT_PASSWORD_AUTOTYPE_Q    3826
+
+/* caption of every message box the vault shows (localized) */
+#define IDT_PASSWORD_VAULT_CAPTION 3828

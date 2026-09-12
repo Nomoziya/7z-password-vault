@@ -59,4 +59,8 @@ public:
   static bool PromptForMasterPassword(HWND parent, UString &password, UString &errorMessage);
 };
 
+// Caption used by every message box the vault shows. Localized through the
+// 7-Zip lang files (IDT_PASSWORD_VAULT_CAPTION) with a built-in fallback.
+UString PasswordVault_GetCaption();
+
 #endif
