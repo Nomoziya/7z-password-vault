@@ -65,11 +65,6 @@ void OptionsDialog(HWND hwndOwner, HINSTANCE /* hInstance */)
     page.Page = pagePointers[i];
   }
 
-  // password management page title (not present in lang files yet)
-  FOR_VECTOR(i, pages)
-    if (pages[i].ID == IDD_PASSWORD_PAGE)
-      pages[i].Title = L"密码管理";
-
   const INT_PTR res = NControl::MyPropertySheet(pages, hwndOwner, LangString(IDS_OPTIONS));
   
   if (res != -1 && res != 0)

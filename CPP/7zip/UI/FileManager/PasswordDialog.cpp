@@ -14,7 +14,15 @@
 static const UInt32 kLangIDs[] =
 {
   IDT_PASSWORD_ENTER,
-  IDX_PASSWORD_SHOW
+  IDX_PASSWORD_SHOW,
+  IDT_PASSWORD_SAVED,
+  IDB_PASSWORD_SAVE,
+  IDB_PASSWORD_DELETE
+};
+
+static const UInt32 kNameDialogLangIDs[] =
+{
+  IDT_PASSWORD_NAME
 };
 #endif
 
@@ -134,11 +142,6 @@ bool CPasswordDialog::OnInit()
   LangSetDlgItems(*this, kLangIDs, Z7_ARRAY_SIZE(kLangIDs));
   #endif
 
-  // Chinese text for our own controls.
-  SetItemText(IDT_PASSWORD_SAVED, L"已保存的密码：");
-  SetItemText(IDB_PASSWORD_SAVE, L"保存...");
-  SetItemText(IDB_PASSWORD_DELETE, L"删除");
-
   _passwordEdit.Attach(GetItem(IDE_PASSWORD_PASSWORD));
   _savedCombo.Attach(GetItem(IDE_PASSWORD_SAVED));
 
@@ -201,8 +204,10 @@ void CPasswordDialog::OnOK()
 
 bool CPasswordNameDialog::OnInit()
 {
-  SetText(L"保存密码");
-  SetItemText(IDT_PASSWORD_SAVED, L"名称：");
+  #ifdef Z7_LANG
+  LangSetWindowText(*this, IDD_PASSWORD_NAME);
+  LangSetDlgItems(*this, kNameDialogLangIDs, Z7_ARRAY_SIZE(kNameDialogLangIDs));
+  #endif
   _edit.Attach(GetItem(IDE_PASSWORD_NAME));
   _edit.SetText(Name);
   return CModalDialog::OnInit();

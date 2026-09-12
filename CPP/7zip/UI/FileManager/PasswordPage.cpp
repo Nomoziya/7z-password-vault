@@ -4,12 +4,29 @@
 
 #include "../Common/ZipRegistry.h"
 
+#ifdef Z7_LANG
+#include "LangUtils.h"
+#endif
+
 #include "BrowseDialog.h"
 #include "PasswordPage.h"
 #include "PasswordPageRes.h"
 #include "PasswordVault.h"
 
 using namespace NWindows;
+
+#ifdef Z7_LANG
+static const UInt32 kLangIDs[] =
+{
+  IDT_PASSWORD_VAULT_PATH,
+  IDX_PASSWORD_USE_MASTER,
+  IDX_PASSWORD_REMEMBER,
+  IDX_PASSWORD_AUTOFILL,
+  IDX_PASSWORD_SHOW_DEFAULT,
+  IDB_PASSWORD_SET_MASTER,
+  IDB_PASSWORD_VAULT_BROWSE
+};
+#endif
 
 void CPasswordPage::ModifiedEvent()
 {
@@ -24,13 +41,9 @@ bool CPasswordPage::OnInit()
   _initMode = true;
   _needSave = false;
 
-  SetItemText(IDT_PASSWORD_VAULT_PATH, L"密码库位置（留空使用默认）：");
-  SetItemText(IDB_PASSWORD_VAULT_BROWSE, L"浏览...");
-  SetItemText(IDX_PASSWORD_USE_MASTER, L"使用主密码加密（可移植）");
-  SetItemText(IDX_PASSWORD_REMEMBER, L"本次会话记住主密码");
-  SetItemText(IDB_PASSWORD_SET_MASTER, L"设置主密码...");
-  SetItemText(IDX_PASSWORD_AUTOFILL, L"自动填入唯一匹配的密码");
-  SetItemText(IDX_PASSWORD_SHOW_DEFAULT, L"默认显示密码");
+  #ifdef Z7_LANG
+  LangSetDlgItems(*this, kLangIDs, Z7_ARRAY_SIZE(kLangIDs));
+  #endif
 
   _vaultPathEdit.Attach(GetItem(IDE_PASSWORD_VAULT_PATH));
 

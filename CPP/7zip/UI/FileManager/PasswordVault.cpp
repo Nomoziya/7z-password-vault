@@ -10,6 +10,10 @@
 
 #include "../Common/ZipRegistry.h"
 
+#ifdef Z7_LANG
+#include "LangUtils.h"
+#endif
+
 #include "PasswordVault.h"
 
 using namespace NWindows;
@@ -230,8 +234,13 @@ public:
 
 bool CPasswordMasterDialog::OnInit()
 {
-  SetText(L"主密码");
-  SetItemText(IDT_PASSWORD_ENTER, L"主密码：");
+  #ifdef Z7_LANG
+  LangSetWindowText(*this, IDD_PASSWORD_MASTER);
+  {
+    const UInt32 ids[] = { IDT_PASSWORD_MASTER };
+    LangSetDlgItems(*this, ids, Z7_ARRAY_SIZE(ids));
+  }
+  #endif
   _edit.Attach(GetItem(IDE_PASSWORD_MASTER));
   _edit.SetText(Password);
   return CModalDialog::OnInit();
