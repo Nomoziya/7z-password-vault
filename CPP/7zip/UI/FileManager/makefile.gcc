@@ -14,9 +14,10 @@ endif
 
 # -mwindows : GUI subsystem (WinMain entry point)
 # -lcrypt32  : DPAPI (password vault)
+# -lbcrypt   : PBKDF2 + AES-256-GCM (master password)
 # -lhtmlhelp : HtmlHelpW
 # -lmpr      : WNet* functions (Net.cpp)
-MY_LIBS = -mwindows -lcrypt32 -lhtmlhelp -lmpr
+MY_LIBS = -mwindows -lcrypt32 -lbcrypt -lhtmlhelp -lmpr
 
 LOCAL_FLAGS = \
   -DZ7_LANG \
@@ -80,6 +81,7 @@ FM_OBJS = \
   $O/OverwriteDialog.o \
   $O/PasswordDialog.o \
   $O/PasswordVault.o \
+  $O/PasswordPage.o \
   $O/ProgressDialog2.o \
   $O/SettingsPage.o \
   $O/SplitDialog.o \

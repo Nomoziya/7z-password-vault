@@ -14,8 +14,9 @@ endif
 
 # -mwindows : GUI subsystem (WinMain entry point)
 # -lcrypt32  : DPAPI (password vault)
+# -lbcrypt   : PBKDF2 + AES-256-GCM (master password)
 # -lhtmlhelp : HtmlHelpW
-MY_LIBS = -mwindows -lcrypt32 -lhtmlhelp
+MY_LIBS = -mwindows -lcrypt32 -lbcrypt -lhtmlhelp
 
 LOCAL_FLAGS = \
   -DZ7_LANG \

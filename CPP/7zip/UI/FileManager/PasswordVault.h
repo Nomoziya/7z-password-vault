@@ -7,33 +7,56 @@
 #include "../../../Common/MyString.h"
 #include "../../../Common/MyVector.h"
 
+#include "../../../Windows/FileIO.h"
+#include "../../../Windows/Control/Dialog.h"
+#include "../../../Windows/Control/Edit.h"
+
+#include "PasswordDialogRes.h"
+
 struct CPasswordVaultEntry
 {
   UString Name;
-  CByteBuffer EncryptedPassword; // DPAPI ciphertext (CryptProtectData output)
+  UString Password; // plaintext, kept in memory only; encrypted on disk
 };
 
 class CPasswordVault
 {
   CObjectVector<CPasswordVaultEntry> _entries;
   UString _path;
+  bool _masterMode; // how the file was last saved
+
+  bool Load_DPAPI(NWindows::NFile::NIO::CInFile &f, UString &errorMessage);
+  bool Load_Master(HWND parent, NWindows::NFile::NIO::CInFile &f, UString &errorMessage);
+  bool Save_DPAPI(NWindows::NFile::NIO::COutFile &f, UString &errorMessage);
+  bool Save_Master(NWindows::NFile::NIO::COutFile &f, UString &errorMessage);
+
+  void SerializeEntries(CByteBuffer &out);
+  bool ParseEntries(const Byte *data, size_t size, UString &errorMessage);
+
 public:
   void SetPath(const UString &path) { _path = path; }
+  const UString &GetPath() const { return _path; }
 
   CObjectVector<CPasswordVaultEntry> &Entries() { return _entries; }
   const CObjectVector<CPasswordVaultEntry> &Entries() const { return _entries; }
 
-  // Returns the default vault file path: %APPDATA%\7-Zip\7zPasswordVault.dat
   static UString GetDefaultPath();
+  static UString GetConfiguredPath();
 
-  bool Load(UString &errorMessage);
+  // parent is used only to show the master-password prompt when needed.
+  bool Load(HWND parent, UString &errorMessage);
   bool Save(UString &errorMessage);
 
-  // Returns entry index, or -1 when not found.
   int FindByName(const UString &name) const;
 
-  static bool EncryptPassword(const UString &password, CByteBuffer &blob, UString &errorMessage);
-  static bool DecryptPassword(const CByteBuffer &blob, UString &password, UString &errorMessage);
+  // Master password session cache.
+  // When the vault is encrypted with a master password, we cache the
+  // master password for the process lifetime if "remember" is enabled.
+  static void SetCachedMasterPassword(const UString &password);
+  static void ClearCachedMasterPassword();
+  static bool HaveCachedMasterPassword();
+  static bool GetMasterPassword(HWND parent, UString &password, UString &errorMessage);
+  static bool PromptForMasterPassword(HWND parent, UString &password, UString &errorMessage);
 };
 
 #endif

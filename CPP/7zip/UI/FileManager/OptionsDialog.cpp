@@ -15,6 +15,8 @@
 #include "LangPageRes.h"
 #include "MenuPage.h"
 #include "MenuPageRes.h"
+#include "PasswordPage.h"
+#include "PasswordPageRes.h"
 #include "SettingsPage.h"
 #include "SettingsPageRes.h"
 #include "SystemPage.h"
@@ -37,6 +39,7 @@ void OptionsDialog(HWND hwndOwner, HINSTANCE /* hInstance */)
   CEditPage editPage;
   CSettingsPage settingsPage;
   CLangPage langPage;
+  CPasswordPage passwordPage;
 
   CObjectVector<NControl::CPageInfo> pages;
   BIG_DIALOG_SIZE(200, 200);
@@ -47,9 +50,10 @@ void OptionsDialog(HWND hwndOwner, HINSTANCE /* hInstance */)
       SIZED_DIALOG(IDD_FOLDERS),
       SIZED_DIALOG(IDD_EDIT),
       SIZED_DIALOG(IDD_SETTINGS),
-      SIZED_DIALOG(IDD_LANG) };
+      SIZED_DIALOG(IDD_LANG),
+      SIZED_DIALOG(IDD_PASSWORD_PAGE) };
 
-  NControl::CPropertyPage *pagePointers[] = { &systemPage,  &menuPage, &foldersPage, &editPage, &settingsPage, &langPage };
+  NControl::CPropertyPage *pagePointers[] = { &systemPage,  &menuPage, &foldersPage, &editPage, &settingsPage, &langPage, &passwordPage };
   
   for (unsigned i = 0; i < Z7_ARRAY_SIZE(pageIDs); i++)
   {
@@ -60,6 +64,11 @@ void OptionsDialog(HWND hwndOwner, HINSTANCE /* hInstance */)
     #endif
     page.Page = pagePointers[i];
   }
+
+  // password management page title (not present in lang files yet)
+  FOR_VECTOR(i, pages)
+    if (pages[i].ID == IDD_PASSWORD_PAGE)
+      pages[i].Title = L"密码管理";
 
   const INT_PTR res = NControl::MyPropertySheet(pages, hwndOwner, LangString(IDS_OPTIONS));
   

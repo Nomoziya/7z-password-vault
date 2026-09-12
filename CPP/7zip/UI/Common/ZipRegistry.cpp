@@ -597,3 +597,44 @@ void CContextMenuInfo::Load()
 
   Flags_Def = (key.GetValue_UInt32_IfOk(kContextMenu, Flags) == ERROR_SUCCESS);
 }
+
+namespace NPasswordVault
+{
+static LPCTSTR const kKeyName = TEXT("PasswordVault");
+
+static LPCTSTR const kVaultPath = TEXT("VaultPath");
+static LPCTSTR const kUseMasterPassword = TEXT("UseMasterPassword");
+static LPCTSTR const kRememberMasterPassword = TEXT("RememberMasterPassword");
+static LPCTSTR const kAutoFill = TEXT("AutoFill");
+
+void CInfo::Save() const
+{
+  CS_LOCK
+  CKey key;
+  CreateMainKey(key, kKeyName);
+  key.SetValue(kVaultPath, fs2us(VaultPath));
+  key.SetValue(kUseMasterPassword, UseMasterPassword);
+  key.SetValue(kRememberMasterPassword, RememberMasterPassword);
+  key.SetValue(kAutoFill, AutoFill);
+}
+
+void CInfo::Load()
+{
+  VaultPath.Empty();
+  UseMasterPassword = false;
+  RememberMasterPassword = false;
+  AutoFill = false;
+
+  CS_LOCK
+  CKey key;
+  if (OpenMainKey(key, kKeyName) != ERROR_SUCCESS)
+    return;
+
+  UString pathU;
+  if (key.QueryValue(kVaultPath, pathU) == ERROR_SUCCESS)
+    VaultPath = us2fs(pathU);
+  key.GetValue_bool_IfOk(kUseMasterPassword, UseMasterPassword);
+  key.GetValue_bool_IfOk(kRememberMasterPassword, RememberMasterPassword);
+  key.GetValue_bool_IfOk(kAutoFill, AutoFill);
+}
+}

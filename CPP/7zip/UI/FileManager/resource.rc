@@ -285,6 +285,7 @@ END
 #include "MessagesDialog.rc"
 #include "OverwriteDialog.rc"
 #include "PasswordDialog.rc"
+#include "PasswordPage.rc"
 #include "ProgressDialog2.rc"
 #include "PropertyName.rc"
 #include "SettingsPage.rc"

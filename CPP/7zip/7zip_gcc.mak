@@ -1101,6 +1101,8 @@ $O/PasswordDialog.o: ../../UI/FileManager/PasswordDialog.cpp
 	$(CXX) $(CXXFLAGS) $<
 $O/PasswordVault.o: ../../UI/FileManager/PasswordVault.cpp
 	$(CXX) $(CXXFLAGS) $<
+$O/PasswordPage.o: ../../UI/FileManager/PasswordPage.cpp
+	$(CXX) $(CXXFLAGS) $<
 $O/ProgramLocation.o: ../../UI/FileManager/ProgramLocation.cpp
 	$(CXX) $(CXXFLAGS) $<
 $O/ProgressDialog.o: ../../UI/FileManager/ProgressDialog.cpp

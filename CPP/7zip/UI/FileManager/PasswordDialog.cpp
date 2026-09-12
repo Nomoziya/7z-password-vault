@@ -4,6 +4,8 @@
 
 #include "PasswordDialog.h"
 
+#include "../Common/ZipRegistry.h"
+
 #ifdef Z7_LANG
 #include "LangUtils.h"
 #endif
@@ -18,7 +20,7 @@ static const UInt32 kLangIDs[] =
 
 static void VaultErrorMessage(HWND wnd, const UString &message)
 {
-  ::MessageBoxW(wnd, message, L"7-Zip Password Vault", MB_ICONERROR | MB_OK);
+  ::MessageBoxW(wnd, message, L"7-Zip 密码管家", MB_ICONERROR | MB_OK);
 }
 
 void CPasswordDialog::ReadControls()
@@ -51,15 +53,7 @@ void CPasswordDialog::OnSavedSelectionChanged()
   if ((unsigned)index >= entries.Size())
     return;
 
-  UString decrypted;
-  UString error;
-  if (!CPasswordVault::DecryptPassword(entries[index].EncryptedPassword, decrypted, error))
-  {
-    VaultErrorMessage(*this, error);
-    return;
-  }
-
-  Password = decrypted;
+  Password = entries[index].Password;
   SetTextSpec();
 }
 
@@ -68,7 +62,7 @@ void CPasswordDialog::SaveCurrentPassword()
   _passwordEdit.GetText(Password);
   if (Password.IsEmpty())
   {
-    ::MessageBoxW(*this, L"Password is empty.", L"7-Zip Password Vault", MB_ICONWARNING | MB_OK);
+    ::MessageBoxW(*this, L"密码为空。", L"7-Zip 密码管家", MB_ICONWARNING | MB_OK);
     return;
   }
 
@@ -80,29 +74,22 @@ void CPasswordDialog::SaveCurrentPassword()
   name.Trim();
   if (name.IsEmpty())
   {
-    ::MessageBoxW(*this, L"Name is empty.", L"7-Zip Password Vault", MB_ICONWARNING | MB_OK);
-    return;
-  }
-
-  UString error;
-  CByteBuffer blob;
-  if (!CPasswordVault::EncryptPassword(Password, blob, error))
-  {
-    VaultErrorMessage(*this, error);
+    ::MessageBoxW(*this, L"名称为空。", L"7-Zip 密码管家", MB_ICONWARNING | MB_OK);
     return;
   }
 
   int index = _vault.FindByName(name);
   if (index >= 0)
-    _vault.Entries()[(unsigned)index].EncryptedPassword = blob;
+    _vault.Entries()[(unsigned)index].Password = Password;
   else
   {
     CPasswordVaultEntry entry;
     entry.Name = name;
-    entry.EncryptedPassword = blob;
+    entry.Password = Password;
     _vault.Entries().Add(entry);
   }
 
+  UString error;
   if (!_vault.Save(error))
   {
     VaultErrorMessage(*this, error);
@@ -125,10 +112,10 @@ void CPasswordDialog::DeleteSelectedSavedPassword()
   if ((unsigned)index >= entries.Size())
     return;
 
-  UString message = L"Delete saved password \"";
+  UString message = L"删除已保存的密码“";
   message += entries[index].Name;
-  message += L"\"?";
-  if (::MessageBoxW(*this, message, L"7-Zip Password Vault", MB_ICONQUESTION | MB_YESNO) != IDYES)
+  message += L"”？";
+  if (::MessageBoxW(*this, message, L"7-Zip 密码管家", MB_ICONQUESTION | MB_YESNO) != IDYES)
     return;
 
   _vault.Entries().Delete((unsigned)index);
@@ -147,14 +134,29 @@ bool CPasswordDialog::OnInit()
   LangSetDlgItems(*this, kLangIDs, Z7_ARRAY_SIZE(kLangIDs));
   #endif
 
+  // Chinese text for our own controls.
+  SetItemText(IDT_PASSWORD_SAVED, L"已保存的密码：");
+  SetItemText(IDB_PASSWORD_SAVE, L"保存...");
+  SetItemText(IDB_PASSWORD_DELETE, L"删除");
+
   _passwordEdit.Attach(GetItem(IDE_PASSWORD_PASSWORD));
   _savedCombo.Attach(GetItem(IDE_PASSWORD_SAVED));
 
-  _vault.SetPath(CPasswordVault::GetDefaultPath());
+  _vault.SetPath(CPasswordVault::GetConfiguredPath());
   UString error;
-  if (!_vault.Load(error))
+  if (!_vault.Load(*this, error))
     VaultErrorMessage(*this, error);
   FillSavedCombo();
+
+  NPasswordVault::CInfo settings;
+  settings.Load();
+
+  // Auto-fill the only saved password when enabled.
+  if (settings.AutoFill && _vault.Entries().Size() == 1)
+  {
+    _savedCombo.SetCurSel(0);
+    Password = _vault.Entries()[0].Password;
+  }
 
   CheckButton(IDX_PASSWORD_SHOW, ShowPassword);
   SetTextSpec();
@@ -199,6 +201,8 @@ void CPasswordDialog::OnOK()
 
 bool CPasswordNameDialog::OnInit()
 {
+  SetText(L"保存密码");
+  SetItemText(IDT_PASSWORD_SAVED, L"名称：");
   _edit.Attach(GetItem(IDE_PASSWORD_NAME));
   _edit.SetText(Name);
   return CModalDialog::OnInit();
