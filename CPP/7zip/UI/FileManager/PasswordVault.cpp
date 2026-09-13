@@ -42,16 +42,28 @@ static const UInt32 kMinIterations = 1000;
 static const UInt32 kMaxIterations = 10000000;
 static const UInt32 kMaxEntries = 100000;
 
-UString PasswordVault_GetCaption()
+UString PasswordVault_GetText(UInt32 langID, const wchar_t *fallback)
 {
   #ifdef Z7_LANG
   {
-    const UString s = LangString(IDT_PASSWORD_VAULT_CAPTION);
+    const UString s = LangString(langID);
     if (!s.IsEmpty())
       return s;
   }
   #endif
-  return UString(L"7-Zip 密码管家");
+  return UString(fallback);
+}
+
+UString PasswordVault_GetCaption()
+{
+  return PasswordVault_GetText(IDT_PASSWORD_VAULT_CAPTION, L"7-Zip 密码管家");
+}
+
+/* Every error message below is shown in a message box, so it goes through the
+   lang files too; the Chinese text stays as the built-in fallback. */
+static void SetError(UString &errorMessage, UInt32 langID, const wchar_t *fallback)
+{
+  errorMessage = PasswordVault_GetText(langID, fallback);
 }
 
 // ---------------------------------------------------------------------------
@@ -389,21 +401,21 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
   char magic[4];
   if (!ReadBuf(f, magic, 4) || memcmp(magic, kMagic, 4) != 0)
   {
-    errorMessage = L"密码库文件头无效";
+    SetError(errorMessage, IDT_PASSWORD_ERR_MAGIC, L"密码库文件头无效");
     return false;
   }
 
   Byte version = 0;
   if (!ReadBuf(f, &version, 1) || version < kVersion_Min || version > kVersion)
   {
-    errorMessage = L"不支持的密码库版本";
+    SetError(errorMessage, IDT_PASSWORD_ERR_VERSION, L"不支持的密码库版本");
     return false;
   }
 
   Byte flags = 0;
   if (!ReadBuf(f, &flags, 1))
   {
-    errorMessage = L"密码库文件已损坏或无效";
+    SetError(errorMessage, IDT_PASSWORD_ERR_FILE, L"密码库文件已损坏或无效");
     return false;
   }
 
@@ -424,7 +436,7 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent)
     COutFile f;
     if (!f.Create_ALWAYS(tmpPath))
     {
-      errorMessage = L"无法创建密码库文件";
+      SetError(errorMessage, IDT_PASSWORD_ERR_CREATE, L"无法创建密码库文件");
       return false;
     }
 
@@ -442,7 +454,7 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent)
     }
 
     if (!ok && errorMessage.IsEmpty())
-      errorMessage = L"无法写入密码库文件";
+      SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
 
     f.Close();
 
@@ -455,7 +467,7 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent)
 
   if (!::MoveFileExW(tmpPath, _path, MOVEFILE_REPLACE_EXISTING))
   {
-    errorMessage = L"无法替换密码库文件";
+    SetError(errorMessage, IDT_PASSWORD_ERR_REPLACE, L"无法替换密码库文件");
     ::DeleteFileW(tmpPath);
     return false;
   }
@@ -486,7 +498,7 @@ bool CPasswordVault::ParseEntries(const Byte *data, size_t size, UString &errorM
   UInt32 count = 0;
   if (!ReadUInt32Mem(data, size, pos, count))
   {
-    errorMessage = L"密码库数据已损坏";
+    SetError(errorMessage, IDT_PASSWORD_ERR_DATA, L"密码库数据已损坏");
     return false;
   }
 
@@ -495,7 +507,7 @@ bool CPasswordVault::ParseEntries(const Byte *data, size_t size, UString &errorM
     UInt32 nameBytes = 0;
     if (!ReadUInt32Mem(data, size, pos, nameBytes) || (nameBytes & 1) != 0 || pos + nameBytes > size)
     {
-      errorMessage = L"密码库数据已损坏";
+      SetError(errorMessage, IDT_PASSWORD_ERR_DATA, L"密码库数据已损坏");
       return false;
     }
 
@@ -513,7 +525,7 @@ bool CPasswordVault::ParseEntries(const Byte *data, size_t size, UString &errorM
     UInt32 passBytes = 0;
     if (!ReadUInt32Mem(data, size, pos, passBytes) || (passBytes & 1) != 0 || pos + passBytes > size)
     {
-      errorMessage = L"密码库数据已损坏";
+      SetError(errorMessage, IDT_PASSWORD_ERR_DATA, L"密码库数据已损坏");
       return false;
     }
 
@@ -546,26 +558,26 @@ static bool Read_DPAPI_String(CInFile &f, UString &dest, UString &errorMessage)
   UInt32 blobSize = 0;
   if (!ReadUInt32(f, blobSize) || blobSize > kMaxBlobSize)
   {
-    errorMessage = L"密码库条目已损坏";
+    SetError(errorMessage, IDT_PASSWORD_ERR_ENTRY, L"密码库条目已损坏");
     return false;
   }
 
   CByteBuffer blob(blobSize);
   if (blobSize != 0 && !ReadBuf(f, blob, blobSize))
   {
-    errorMessage = L"密码库条目已损坏";
+    SetError(errorMessage, IDT_PASSWORD_ERR_ENTRY, L"密码库条目已损坏");
     return false;
   }
 
   CByteBuffer plain;
   if (!DpapiUnprotect((const Byte *)blob, blobSize, plain))
   {
-    errorMessage = L"解密失败（可能不是同一个 Windows 账户或电脑）";
+    SetError(errorMessage, IDT_PASSWORD_ERR_DECRYPT, L"解密失败（可能不是同一个 Windows 账户或电脑）");
     return false;
   }
   if ((plain.Size() & 1) != 0)
   {
-    errorMessage = L"密码数据无效";
+    SetError(errorMessage, IDT_PASSWORD_ERR_PASSWORD, L"密码数据无效");
     return false;
   }
 
@@ -584,13 +596,13 @@ static bool Write_DPAPI_String(COutFile &f, const UString &s, UString &errorMess
   CByteBuffer blob;
   if (!DpapiProtect((const void *)(const wchar_t *)s, (size_t)s.Len() * sizeof(wchar_t), blob))
   {
-    errorMessage = L"加密失败";
+    SetError(errorMessage, IDT_PASSWORD_ERR_ENCRYPT, L"加密失败");
     return false;
   }
   const UInt32 blobSize = (UInt32)blob.Size();
   if (!WriteUInt32(f, blobSize) || (blobSize != 0 && !WriteBuf(f, (const Byte *)blob, blobSize)))
   {
-    errorMessage = L"无法写入密码库文件";
+    SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
     return false;
   }
   return true;
@@ -603,14 +615,14 @@ static bool Read_PlainString(CInFile &f, UString &dest, UString &errorMessage)
   UInt32 bytes = 0;
   if (!ReadUInt32(f, bytes) || (bytes & 1) != 0 || bytes > kMaxNameBytes)
   {
-    errorMessage = L"密码库条目已损坏";
+    SetError(errorMessage, IDT_PASSWORD_ERR_ENTRY, L"密码库条目已损坏");
     return false;
   }
 
   CByteBuffer buf(bytes);
   if (bytes != 0 && !ReadBuf(f, buf, bytes))
   {
-    errorMessage = L"密码库条目已损坏";
+    SetError(errorMessage, IDT_PASSWORD_ERR_ENTRY, L"密码库条目已损坏");
     return false;
   }
 
@@ -628,7 +640,7 @@ bool CPasswordVault::Load_DPAPI(CInFile &f, Byte version, UString &errorMessage)
   UInt32 count = 0;
   if (!ReadUInt32(f, count) || count > kMaxEntries)
   {
-    errorMessage = L"密码库文件已损坏或无效";
+    SetError(errorMessage, IDT_PASSWORD_ERR_FILE, L"密码库文件已损坏或无效");
     return false;
   }
 
@@ -665,14 +677,14 @@ bool CPasswordVault::Load_Master(HWND parent, CInFile &f, UString &errorMessage)
       iterations < kMinIterations || iterations > kMaxIterations ||
       cipherLen > kMaxCipherSize)
   {
-    errorMessage = L"密码库文件已损坏或无效";
+    SetError(errorMessage, IDT_PASSWORD_ERR_FILE, L"密码库文件已损坏或无效");
     return false;
   }
 
   CByteBuffer cipher(cipherLen);
   if (cipherLen != 0 && !ReadBuf(f, cipher, cipherLen))
   {
-    errorMessage = L"密码库文件已损坏或无效";
+    SetError(errorMessage, IDT_PASSWORD_ERR_FILE, L"密码库文件已损坏或无效");
     return false;
   }
 
@@ -684,7 +696,7 @@ bool CPasswordVault::Load_Master(HWND parent, CInFile &f, UString &errorMessage)
   if (!DeriveKey(master, salt, kSaltSize, iterations, key))
   {
     SecureWipeString(master);
-    errorMessage = L"密钥派生失败";
+    SetError(errorMessage, IDT_PASSWORD_ERR_KDF, L"密钥派生失败");
     return false;
   }
 
@@ -695,7 +707,7 @@ bool CPasswordVault::Load_Master(HWND parent, CInFile &f, UString &errorMessage)
   SecureWipeString(master);
   if (!decOk)
   {
-    errorMessage = L"主密码错误，或密码库文件已损坏";
+    SetError(errorMessage, IDT_PASSWORD_ERR_MASTER, L"主密码错误，或密码库文件已损坏");
     return false;
   }
 
@@ -711,7 +723,7 @@ bool CPasswordVault::Save_DPAPI(COutFile &f, UString &errorMessage)
   const UInt32 count = (UInt32)_entries.Size();
   if (!WriteUInt32(f, count))
   {
-    errorMessage = L"无法写入密码库文件";
+    SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
     return false;
   }
 
@@ -739,7 +751,7 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage, HWND parent
   Byte iv[kIvSize];
   if (!GenRandom(salt, kSaltSize) || !GenRandom(iv, kIvSize))
   {
-    errorMessage = L"随机数生成失败";
+    SetError(errorMessage, IDT_PASSWORD_ERR_RANDOM, L"随机数生成失败");
     return false;
   }
 
@@ -747,7 +759,7 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage, HWND parent
   if (!DeriveKey(master, salt, kSaltSize, kPbkdf2Iterations, key))
   {
     SecureWipeString(master);
-    errorMessage = L"密钥派生失败";
+    SetError(errorMessage, IDT_PASSWORD_ERR_KDF, L"密钥派生失败");
     return false;
   }
   SecureWipeString(master);
@@ -763,7 +775,7 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage, HWND parent
   plain.Wipe();
   if (!encOk)
   {
-    errorMessage = L"加密失败";
+    SetError(errorMessage, IDT_PASSWORD_ERR_ENCRYPT, L"加密失败");
     return false;
   }
 
@@ -774,7 +786,7 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage, HWND parent
       !WriteUInt32(f, (UInt32)plain.Size()) ||
       !WriteBuf(f, (const Byte *)cipher, plain.Size()))
   {
-    errorMessage = L"无法写入密码库文件";
+    SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
     return false;
   }
 

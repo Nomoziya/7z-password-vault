@@ -62,6 +62,12 @@ public:
   static bool PromptForMasterPassword(HWND parent, UString &password, UString &errorMessage);
 };
 
+/* Localized text. The fallback (Chinese) is used only when the loaded lang
+   file has no string for that id, so every dialog and message box follows the
+   7-Zip UI language. Available in both 7zFM and 7zG, because PasswordVault.cpp
+   and PasswordVaultUi.cpp are linked into both. */
+UString PasswordVault_GetText(UInt32 langID, const wchar_t *fallback);
+
 // Caption used by every message box the vault shows. Localized through the
 // 7-Zip lang files (IDT_PASSWORD_VAULT_CAPTION) with a built-in fallback.
 UString PasswordVault_GetCaption();

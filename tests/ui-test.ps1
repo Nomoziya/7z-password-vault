@@ -47,6 +47,7 @@ $script:titles = @{
     List = "已保存的密码"; Options = "选项"; Caption = "7-Zip 密码管家"
     Filled = "已填入："; Page = "密码管理"; PageLabel = "密码库位置（留空使用默认）："
     Untitled = "未命名 1"; Compress = "添加到压缩包"
+    ExportTitle = "导出密码库"; ImportTitle = "导入密码库"
     BtnList = "已保存的密码..."; BtnNew = "新建密码..."; Master = "主密码"
   }
   "en" = @{
@@ -54,6 +55,7 @@ $script:titles = @{
     List = "Saved passwords"; Options = "Options"; Caption = "7-Zip Password Vault"
     Filled = "Filled in:"; Page = "Password"; PageLabel = "Vault path (empty = default):"
     Untitled = "Untitled 1"; Compress = "Add to Archive"
+    ExportTitle = "Export vault"; ImportTitle = "Import vault"
     BtnList = "Saved passwords..."; BtnNew = "New password..."; Master = "Master password"
   }
 }
@@ -68,6 +70,19 @@ if ($UiLang -eq "auto") {
   }
 }
 $T = $script:titles[$UiLang]
+
+# ---- the UI language: -UiLang also switches the application to it --------------
+# The test finds every window by its title, so it has to run against the language it
+# expects. 7-Zip reads HKCU\Software\7-Zip\Lang, so that value is set for the run and
+# put back afterwards (the same way check-labels.ps1 does it).
+$langKey = "HKCU:\Software\7-Zip"
+$savedLang = (Get-ItemProperty -Path $langKey -Name Lang -ErrorAction SilentlyContinue).Lang
+$script:restoreLang = $false
+if ($UiLang -ne "auto") {
+  if (-not (Test-Path $langKey)) { New-Item -Path $langKey -Force | Out-Null }
+  Set-ItemProperty -Path $langKey -Name "Lang" -Value $UiLang -Type String
+  $script:restoreLang = $true
+}
 
 $workDir   = Join-Path $env:TEMP "7zpw_test"
 $archive   = Join-Path $workDir "enc.7z"
@@ -603,6 +618,12 @@ function Close-Box([uint32]$procId, [IntPtr]$boxHwnd, [string]$title, [int]$seco
   if ($title -eq "") { Start-Sleep -Milliseconds 500; return $true }
   return (Wait-NoDialog $procId $title $seconds)
 }
+# The vault message boxes come from the lang files, so in an English run none of them
+# may contain Chinese. This is what catches a string that was left hard coded.
+function Test-LocalizedText([string]$text) {
+  if ($UiLang -ne "en") { return $true }
+  return ($text -notmatch "[\u4e00-\u9fff]")
+}
 # Waits for a control. A dialog window exists before its controls are created,
 # so a control looked up right after the window appears can still be missing.
 function Wait-Child([IntPtr]$parent, [int]$id, [int]$seconds = 5) {
@@ -718,7 +739,7 @@ Set-ItemProperty -Path $regKey -Name "ShowPasswordInList" -Value 0 -Type DWord  
 Set-ItemProperty -Path $regKey -Name "CloseAfterFill"    -Value 1 -Type DWord   # close after filling by default
 Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 Check "the test does not use the real vault" ($vault -ne $realVault)
-Write-Host ("  UI language: {0}" -f $UiLang) -ForegroundColor DarkGray
+Write-Host ("  UI language: {0}{1}" -f $UiLang, $(if ($script:restoreLang) { " (forced through HKCU\Software\7-Zip\Lang)" } else { "" })) -ForegroundColor DarkGray
 
 # ---------------------------------------------------------------- test 1
 Write-Host "`n== 1. save a named password ==" -ForegroundColor Cyan
@@ -1722,7 +1743,7 @@ Start-Sleep -Milliseconds 400
 $bd = [IntPtr]::Zero
 $bdeadline = (Get-Date).AddSeconds(8)
 while ((Get-Date) -lt $bdeadline) {
-  $bd = [VaultUiTest]::FindDialog([uint32]$p.Id, "导出密码库")
+  $bd = [VaultUiTest]::FindDialog([uint32]$p.Id, $T.ExportTitle)
   if ($bd -ne [IntPtr]::Zero) { break }
   Start-Sleep -Milliseconds 150
 }
@@ -1733,6 +1754,10 @@ if ($bd -ne [IntPtr]::Zero) {
   # the info box reports success; it is modal, so it has to be dismissed
   $info = Wait-Dialog ([uint32]$p.Id) $T.Caption 8
   Check "the export reports success" (Test-Path $exported) "(no $exported)"
+  if ($info -ne [IntPtr]::Zero) {
+    $exportMsg = [VaultUiTest]::GetControlText([VaultUiTest]::FindDescendant($info, 0xFFFF))
+    Check "the export message box follows the UI language" (Test-LocalizedText $exportMsg) "(message=[$exportMsg])"
+  }
   Check "the export message box closes again" (Close-Box ([uint32]$p.Id) $info $T.Caption)
   if ((Test-Path $exported) -and (Test-Path $moved)) {
     $a = (Get-FileHash $moved -Algorithm SHA256).Hash
@@ -1749,7 +1774,7 @@ if (Test-Path $exported) {
   $bd = [IntPtr]::Zero
   $bdeadline = (Get-Date).AddSeconds(8)
   while ((Get-Date) -lt $bdeadline) {
-    $bd = [VaultUiTest]::FindDialog([uint32]$p.Id, "导入密码库")
+    $bd = [VaultUiTest]::FindDialog([uint32]$p.Id, $T.ImportTitle)
     if ($bd -ne [IntPtr]::Zero) { break }
     Start-Sleep -Milliseconds 150
   }
@@ -1769,6 +1794,7 @@ if (Test-Path $exported) {
     if ($info -ne [IntPtr]::Zero) {
       $msgText = [VaultUiTest]::GetControlText([VaultUiTest]::FindDescendant($info, 0xFFFF))
       Check "the import reports one added entry" ($msgText -match "1") "(message=[$msgText])"
+      Check "the import message box follows the UI language" (Test-LocalizedText $msgText) "(message=[$msgText])"
       Check "the import message box closes again" (Close-Box ([uint32]$p.Id) $info $T.Caption)
     }
     Check "the imported vault was written to the new path" (Test-Path $restored)
@@ -1787,6 +1813,10 @@ Set-ItemProperty -Path $regKey -Name "RememberMasterPassword" -Value 0 -Type DWo
 } finally {
   Stop-Fm $null
   Set-VaultSettings $savedSettings
+  if ($script:restoreLang) {
+    if ($savedLang) { Set-ItemProperty -Path $langKey -Name "Lang" -Value $savedLang -Type String }
+    else { Remove-ItemProperty -Path $langKey -Name "Lang" -ErrorAction SilentlyContinue }
+  }
   if (-not $KeepArtifacts) {
     Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
   }

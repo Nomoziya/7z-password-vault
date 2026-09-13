@@ -401,6 +401,60 @@ Show passwords
 &Edit...
 3833
 (unnamed)
+3834
+Select the vault folder
+3835
+The master password cannot be empty.
+3836
+The two passwords do not match.
+3837
+Remove the master password?\n\nThe vault goes back to the Windows credentials (DPAPI) and can then only be decrypted on this computer and this account.
+3838
+The master password was removed; the vault uses DPAPI again.
+3839
+The vault file does not exist yet. Save at least one password first.
+3840
+Export vault
+3841
+Vault files
+3842
+Export failed: the target file cannot be written.
+3843
+The vault was exported.\n\nNote: a vault exported in DPAPI mode can only be decrypted on the same computer and Windows account; a master-password vault can be decrypted on another computer with its master password.
+3844
+Import vault
+3845
+Import finished: {0} added, {1} updated.
+3846
+The vault was written to the new location:\n\n{0}\n\nDelete the vault file at the old location?\n\n{1}
+3847
+Not a vault file (bad file header)
+3848
+Unsupported vault file version
+3849
+The vault file is damaged or invalid
+3850
+Cannot create the vault file
+3851
+Cannot write the vault file
+3852
+Cannot replace the vault file
+3853
+The vault data is damaged
+3854
+A vault entry is damaged
+3855
+Decryption failed (this may not be the same Windows account or computer)
+3856
+Invalid password data
+3857
+Encryption failed
+3858
+Key derivation failed
+3859
+Wrong master password, or the vault file is damaged
+3860
+Random number generation failed
 3900
 Elapsed time:
 Remaining time:

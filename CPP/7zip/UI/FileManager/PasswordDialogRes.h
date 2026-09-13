@@ -58,3 +58,36 @@
    selected row */
 #define IDB_PASSWORD_FILL      3831
 #define IDB_PASSWORD_EDIT      3832
+
+/* message boxes of the settings page (localized, see PasswordVault_GetText) */
+#define IDT_PASSWORD_PICK_FOLDER        3834
+#define IDT_PASSWORD_MASTER_EMPTY       3835
+#define IDT_PASSWORD_MASTER_MISMATCH    3836
+#define IDT_PASSWORD_CLEAR_MASTER_Q     3837
+#define IDT_PASSWORD_CLEAR_MASTER_DONE  3838
+#define IDT_PASSWORD_NO_VAULT_FILE      3839
+#define IDT_PASSWORD_EXPORT_TITLE       3840
+#define IDT_PASSWORD_FILE_FILTER        3841
+#define IDT_PASSWORD_EXPORT_FAILED      3842
+#define IDT_PASSWORD_EXPORT_DONE        3843
+#define IDT_PASSWORD_IMPORT_TITLE       3844
+/* {0} = added, {1} = updated */
+#define IDT_PASSWORD_IMPORT_DONE        3845
+/* {0} = new path, {1} = old path */
+#define IDT_PASSWORD_MOVED_Q            3846
+
+/* vault error messages */
+#define IDT_PASSWORD_ERR_MAGIC          3847
+#define IDT_PASSWORD_ERR_VERSION        3848
+#define IDT_PASSWORD_ERR_FILE           3849
+#define IDT_PASSWORD_ERR_CREATE         3850
+#define IDT_PASSWORD_ERR_WRITE          3851
+#define IDT_PASSWORD_ERR_REPLACE        3852
+#define IDT_PASSWORD_ERR_DATA           3853
+#define IDT_PASSWORD_ERR_ENTRY          3854
+#define IDT_PASSWORD_ERR_DECRYPT        3855
+#define IDT_PASSWORD_ERR_PASSWORD       3856
+#define IDT_PASSWORD_ERR_ENCRYPT        3857
+#define IDT_PASSWORD_ERR_KDF            3858
+#define IDT_PASSWORD_ERR_MASTER         3859
+#define IDT_PASSWORD_ERR_RANDOM         3860

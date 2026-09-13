@@ -108,7 +108,8 @@ void CPasswordPage::OnBrowse()
   UString currentPath;
   _vaultPathEdit.GetText(currentPath);
   UString resultPath;
-  if (MyBrowseForFolder(*this, L"选择密码库文件夹", currentPath, resultPath))
+  const UString title = PasswordVault_GetText(IDT_PASSWORD_PICK_FOLDER, L"选择密码库文件夹");
+  if (MyBrowseForFolder(*this, title, currentPath, resultPath))
     _vaultPathEdit.SetText(resultPath);
 }
 
@@ -144,12 +145,14 @@ void CPasswordPage::OnSetMasterPassword()
 
   if (pw1.IsEmpty())
   {
-    ::MessageBoxW(*this, L"主密码不能为空。", PasswordVault_GetCaption(), MB_ICONWARNING | MB_OK);
+    ::MessageBoxW(*this, PasswordVault_GetText(IDT_PASSWORD_MASTER_EMPTY, L"主密码不能为空。"),
+        PasswordVault_GetCaption(), MB_ICONWARNING | MB_OK);
     return;
   }
   if (pw1 != pw2)
   {
-    ::MessageBoxW(*this, L"两次输入的密码不一致。", PasswordVault_GetCaption(), MB_ICONWARNING | MB_OK);
+    ::MessageBoxW(*this, PasswordVault_GetText(IDT_PASSWORD_MASTER_MISMATCH, L"两次输入的密码不一致。"),
+        PasswordVault_GetCaption(), MB_ICONWARNING | MB_OK);
     return;
   }
 
@@ -198,8 +201,9 @@ void CPasswordPage::OnClearMasterPassword()
   }
 
   if (::MessageBoxW(*this,
-      L"确定要清除主密码吗？\n\n清除后将改用 Windows 凭据（DPAPI）加密，"
-      L"密码库只能在本机本账户下解密。",
+      PasswordVault_GetText(IDT_PASSWORD_CLEAR_MASTER_Q,
+        L"确定要清除主密码吗？\n\n清除后将改用 Windows 凭据（DPAPI）加密，"
+        L"密码库只能在本机本账户下解密。"),
       PasswordVault_GetCaption(), MB_ICONQUESTION | MB_YESNO) != IDYES)
     return;
 
@@ -229,7 +233,8 @@ void CPasswordPage::OnClearMasterPassword()
   _oldVaultPath = us2fs(vaultPath);
   _needSave = true;
   Changed();
-  InfoBox(*this, L"主密码已清除，密码库已改用 DPAPI 加密。");
+  InfoBox(*this, PasswordVault_GetText(IDT_PASSWORD_CLEAR_MASTER_DONE,
+      L"主密码已清除，密码库已改用 DPAPI 加密。"));
 }
 
 void CPasswordPage::OnExport()
@@ -237,20 +242,22 @@ void CPasswordPage::OnExport()
   const UString vaultPath = GetVaultPathFromUi();
   if (!FileExists(vaultPath))
   {
-    InfoBox(*this, L"密码库文件还不存在，请先保存至少一条密码。");
+    InfoBox(*this, PasswordVault_GetText(IDT_PASSWORD_NO_VAULT_FILE,
+        L"密码库文件还不存在，请先保存至少一条密码。"));
     return;
   }
 
   CBrowseInfo bi;
   bi.hwndOwner = *this;
   bi.SaveMode = true;
-  bi.lpstrTitle = L"导出密码库";
+  const UString exportTitle = PasswordVault_GetText(IDT_PASSWORD_EXPORT_TITLE, L"导出密码库");
+  bi.lpstrTitle = exportTitle;
   bi.FilePath = vaultPath;
 
   CObjectVector<CBrowseFilterInfo> filters;
   {
     CBrowseFilterInfo f;
-    f.Description = L"密码库文件";
+    f.Description = PasswordVault_GetText(IDT_PASSWORD_FILE_FILTER, L"密码库文件");
     f.Masks.Add(L"*.dat");
     filters.Add(f);
   }
@@ -259,13 +266,14 @@ void CPasswordPage::OnExport()
 
   if (!::CopyFileW(vaultPath, bi.FilePath, TRUE))
   {
-    ErrorBox(*this, L"导出失败，无法写入目标文件。");
+    ErrorBox(*this, PasswordVault_GetText(IDT_PASSWORD_EXPORT_FAILED,
+        L"导出失败，无法写入目标文件。"));
     return;
   }
 
-  InfoBox(*this,
+  InfoBox(*this, PasswordVault_GetText(IDT_PASSWORD_EXPORT_DONE,
       L"密码库已导出。\n\n注意：DPAPI 模式下导出的文件只能在同一台电脑的同一 "
-      L"Windows 账户下解密；主密码模式下可在其它电脑用主密码解密。");
+      L"Windows 账户下解密；主密码模式下可在其它电脑用主密码解密。"));
 }
 
 void CPasswordPage::OnImport()
@@ -273,12 +281,13 @@ void CPasswordPage::OnImport()
   CBrowseInfo bi;
   bi.hwndOwner = *this;
   bi.SaveMode = false;
-  bi.lpstrTitle = L"导入密码库";
+  const UString importTitle = PasswordVault_GetText(IDT_PASSWORD_IMPORT_TITLE, L"导入密码库");
+  bi.lpstrTitle = importTitle;
 
   CObjectVector<CBrowseFilterInfo> filters;
   {
     CBrowseFilterInfo f;
-    f.Description = L"密码库文件";
+    f.Description = PasswordVault_GetText(IDT_PASSWORD_FILE_FILTER, L"密码库文件");
     f.Masks.Add(L"*.dat");
     filters.Add(f);
   }
@@ -328,11 +337,18 @@ void CPasswordPage::OnImport()
     return;
   }
 
-  UString msg = L"导入完成：新增 ";
-  msg.Add_UInt32(added);
-  msg += L" 条，更新 ";
-  msg.Add_UInt32(updated);
-  msg += L" 条。";
+  /* The two counts are substituted into a localized string: the word order
+     differs between languages, so the markers cannot be split apart in code. */
+  UString msg = PasswordVault_GetText(IDT_PASSWORD_IMPORT_DONE,
+      L"导入完成：新增 {0} 条，更新 {1} 条。");
+  {
+    UString n;
+    n.Add_UInt32(added);
+    msg.Replace(UString(L"{0}"), n);
+    n.Empty();
+    n.Add_UInt32(updated);
+    msg.Replace(UString(L"{1}"), n);
+  }
   InfoBox(*this, msg);
 }
 
@@ -452,10 +468,10 @@ LONG CPasswordPage::OnApply()
 
     if (pathChanged && FileExists(oldPath))
     {
-      UString msg = L"密码库已写入新位置：\r\n";
-      msg += newPath;
-      msg += L"\r\n\r\n是否删除旧位置的密码库文件？\r\n";
-      msg += oldPath;
+      UString msg = PasswordVault_GetText(IDT_PASSWORD_MOVED_Q,
+          L"密码库已写入新位置：\n\n{0}\n\n是否删除旧位置的密码库文件？\n\n{1}");
+      msg.Replace(UString(L"{0}"), newPath);
+      msg.Replace(UString(L"{1}"), oldPath);
       if (::MessageBoxW(*this, msg, PasswordVault_GetCaption(), MB_ICONQUESTION | MB_YESNO) == IDYES)
         ::DeleteFileW(oldPath);
     }

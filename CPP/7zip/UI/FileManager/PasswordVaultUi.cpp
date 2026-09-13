@@ -15,18 +15,6 @@
 using namespace NWindows;
 using namespace NControl;
 
-UString PasswordVault_GetText(UInt32 langID, const wchar_t *fallback)
-{
-  #ifdef Z7_LANG
-  {
-    const UString s = LangString(langID);
-    if (!s.IsEmpty())
-      return s;
-  }
-  #endif
-  return UString(fallback);
-}
-
 static void VaultErrorMessage(HWND wnd, const UString &message)
 {
   if (message.IsEmpty())

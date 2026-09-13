@@ -34,7 +34,9 @@ A modified build of **7-Zip 26.03** with an integrated, encrypted, named passwor
 8. **The same vault in the Add-to-Archive dialog** — 7zG's "Add to Archive" window has the
    same *Saved passwords...* / *New password...* buttons, fills **both** password fields,
    fills by typed name and offers to store a new password.
-9. **Localized UI** — every new dialog and option is localized (English / 简体中文 / 繁體中文 included).
+9. **Localized UI** — every new dialog, option, message box and error message is localized
+   (English / 简体中文 / 繁體中文 included). None of the vault strings is hard coded: they all
+   come from `Lang\*.txt`, with the Chinese text kept as the built-in fallback.
 
 > The file manager loads its language file as `Lang\<lang>.txt` and never `.ttt`, so an English
 > UI needs `Lang\en.txt` (a copy of the `en.ttt` template, which this repository ships). Without
@@ -110,7 +112,7 @@ Two suites, both plain PowerShell (no test framework):
 | Suite | What it covers | Checks |
 |-------|----------------|--------|
 | `tests\core-test.ps1` | 7-Zip's own engine through `7z.exe`: create / list / test / extract for 7z, zip and tar, AES-256 and ZipCrypto zips, header encryption, wrong passwords, damaged and truncated archives, 60+ file and long-name archives | 39 |
-| `tests\ui-test.ps1` | the vault in the real dialogs of `7zFM.exe` / `7zG.exe`: fill, edit, delete, unnamed entries, showing the password of unnamed entries, many entries, name/password collisions, awkward names, Chinese names and passwords, master-password mode, moving (copying) a vault, export/import, the settings page, plus end-to-end runs where a vault password really extracts an archive and the compress dialog really encrypts one | 264 |
+| `tests\ui-test.ps1` | the vault in the real dialogs of `7zFM.exe` / `7zG.exe`: fill, edit, delete, unnamed entries, showing the password of unnamed entries, many entries, name/password collisions, awkward names, Chinese names and passwords, master-password mode, moving (copying) a vault, export/import, the settings page, plus end-to-end runs where a vault password really extracts an archive and the compress dialog really encrypts one | 266 |
 | `tests\check-labels.ps1` | measures every label of every dialog against its control and reports the ones that are cut off — run it after adding or editing a translation | 0 clipped (en) |
 
 `tests\ui-test.ps1` drives the real dialogs through Win32 messages and real mouse input:
@@ -182,7 +184,8 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 7. **密码管理设置页** —— 7-Zip「工具 → 选项」新增「密码管理」页。
 8. **压缩对话框同样接入密码库** —— 7zG 的「添加到压缩包」窗口也有「已保存的密码...」
    与「新建密码...」按钮，会**同时填入两个密码框**，同样支持按名称填入与提示保存。
-9. **多语言** —— 新增对话框与选项均已本地化（英文 / 简体中文 / 繁体中文）。
+9. **多语言** —— 新增的对话框、选项、消息框与错误提示**全部**走语言文件
+   （英文 / 简体中文 / 繁体中文），代码里不再有写死的中文（中文文本仅作为语言文件缺失时的兜底）。
 
 > 文件管理器只加载 `Lang\<语言>.txt`，**不会加载 `.ttt`**。因此英文界面需要 `Lang\en.txt`
 > （即 `en.ttt` 模板的副本，本仓库已提供）。缺少它时英文会退回内置资源字符串，而只存在于
@@ -256,7 +259,7 @@ MSVC（nmake）：使用 `GUI\makefile` 与 `FileManager\makefile`（已链接 `
 | 测试 | 覆盖内容 | 项数 |
 |------|----------|------|
 | `tests\core-test.ps1` | 通过 `7z.exe` 验证 7-Zip 引擎本身：7z / zip / tar 的创建·列表·校验·解压、AES-256 与 ZipCrypto、加密文件名、错误密码、损坏与截断压缩包、60+ 文件与超长文件名 | 39 |
-| `tests\ui-test.ps1` | 真实对话框里的密码库：填入 / 编辑 / 删除、无名称条目、未命名条目直接显示密码、多条目、名称与密码冲突、特殊名称、中文名称与中文密码、主密码模式、密码库搬家（复制到别的路径）、导出 / 导入，以及**端到端**（密码库里的密码真的解开了压缩包、压缩对话框真的加密了压缩包） | 264 |
+| `tests\ui-test.ps1` | 真实对话框里的密码库：填入 / 编辑 / 删除、无名称条目、未命名条目直接显示密码、多条目、名称与密码冲突、特殊名称、中文名称与中文密码、主密码模式、密码库搬家（复制到别的路径）、导出 / 导入，以及**端到端**（密码库里的密码真的解开了压缩包、压缩对话框真的加密了压缩包） | 266 |
 | `tests\check-labels.ps1` | 逐一测量每个对话框中每个标签的文本宽度与控件宽度，报告被截断的标签 —— 新增或修改翻译后应运行 | 英文 0 处截断 |
 
 `tests\ui-test.ps1` 通过 Win32 消息与真实鼠标输入驱动真实对话框：

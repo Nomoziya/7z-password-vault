@@ -181,8 +181,10 @@ Submit it to Microsoft as a false positive and the detection normally disappears
 within a day or two for everyone.
 
 To re-read these reports after a rebuild, use `tests\vt-report.ps1`. It needs a free
-VirusTotal API key in `%USERPROFILE%\.vt-key` or in the gitignored `.vt-key.txt`, and
-prints the per-engine verdicts plus the sandbox behaviour of every file:
+VirusTotal API key in `%USERPROFILE%\.vt-key` — a read-only file outside the
+checkout, so the key can never be committed by accident (a stray `.vt-key.txt` in
+the checkout is gitignored as a second safety net). It prints the per-engine
+verdicts plus the sandbox behaviour of every file:
 
 ```powershell
 pwsh -NoProfile -File tests\vt-report.ps1
@@ -260,8 +262,8 @@ binaries.
 Built with MinGW-w64 GCC 16.2.0 as described above:
 
 ```
-7zG.exe   0a09c42224ff25db96a6b962c765d98e1c526a8b39d0496c2de71df362509d18
-7zFM.exe  ab1326c711dc6ecc23daebc004cd88954639e3feec3c77ef678d3e6b018697fe
+7zG.exe   79763b2ca024b7f53ea820d588662a021f6680dcf18ed1a5a1dd67633a092bb1
+7zFM.exe  cc60c3193f5c9ebabb9eaf31359723abffd4bd13bb360eacb3a1b99171337f92
 ```
 
 ```powershell

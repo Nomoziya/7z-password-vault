@@ -84,7 +84,6 @@ public:
   void OfferToSave(HWND parent, const UString &password);
 };
 
-/* Localized text with a fallback. */
-UString PasswordVault_GetText(UInt32 langID, const wchar_t *fallback);
+
 
 #endif
