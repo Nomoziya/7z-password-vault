@@ -195,10 +195,11 @@ namespace NPasswordVault
     bool UseMasterPassword;      // false = DPAPI, true = AES-256 with master password
     bool RememberMasterPassword; // cache master password for process lifetime
     bool AutoLockMaster;         // drop the cached master password after idle time
-    bool EditByRightClick;       // true = right-click edits a saved entry, false = double-click
+    bool CloseAfterFill;         // close the list window once a password was typed in
     bool AutoTypeByName;         // typing a saved name auto-fills its password
     bool PromptToSaveNew;        // ask to store passwords that are not in the vault yet
     bool ShowPasswordInList;     // show saved passwords in the list instead of dots
+    bool ShowPasswordForUnnamed; // show the password of entries that have no name
 
     void Save() const;
     void Load();

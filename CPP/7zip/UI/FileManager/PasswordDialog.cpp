@@ -24,42 +24,10 @@ static const UInt32 kLangIDs[] =
 static const UInt32 kEditDialogLangIDs[] =
 {
   IDT_PASSWORD_NAME,
-  IDT_PASSWORD_VALUE
+  IDT_PASSWORD_VALUE,
+  IDB_PASSWORD_DELETE
 };
 #endif
-
-static UString GetLangText(UInt32 langID, const wchar_t *fallback)
-{
-  #ifdef Z7_LANG
-  const UString s = LangString(langID);
-  if (!s.IsEmpty())
-    return s;
-  #endif
-  return UString(fallback);
-}
-
-static void VaultErrorMessage(HWND wnd, const UString &message)
-{
-  // An empty message means the user cancelled a master-password prompt,
-  // which is not an error worth reporting.
-  if (message.IsEmpty())
-    return;
-  ::MessageBoxW(wnd, message, PasswordVault_GetCaption(), MB_ICONERROR | MB_OK);
-}
-
-UString PasswordVault_MakeDefaultName(const CPasswordVault &vault)
-{
-  const UString base = GetLangText(IDT_PASSWORD_DEFAULT_NAME, L"未命名");
-  for (unsigned n = 1; n < 100000; n++)
-  {
-    UString s = base;
-    s.Add_Space();
-    s.Add_UInt32(n);
-    if (vault.FindByName(s) < 0)
-      return s;
-  }
-  return base;
-}
 
 // ---- CPasswordEditDialog ----
 
@@ -74,6 +42,8 @@ bool CPasswordEditDialog::OnInit()
   _valueEdit.Attach(GetItem(IDE_PASSWORD_VALUE));
   _nameEdit.SetText(Name);
   _valueEdit.SetText(Value);
+  /* Deleting is only offered for an entry that is already stored. */
+  ShowItem_Bool(IDB_PASSWORD_DELETE, !_isNew);
   return CModalDialog::OnInit();
 }
 
@@ -82,6 +52,27 @@ void CPasswordEditDialog::OnOK()
   _nameEdit.GetText(Name);
   _valueEdit.GetText(Value);
   CModalDialog::OnOK();
+}
+
+bool CPasswordEditDialog::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
+{
+  if (buttonID == IDB_PASSWORD_DELETE)
+  {
+    UString message = PasswordVault_GetText(IDT_PASSWORD_LIST_DELETE_Q, L"");
+    if (!Name.IsEmpty())
+    {
+      message += L"\r\n\r\n";
+      message += Name;
+    }
+    if (::MessageBoxW(*this, message, PasswordVault_GetCaption(),
+        MB_ICONQUESTION | MB_YESNO) == IDYES)
+    {
+      Deleted = true;
+      End(IDOK);
+    }
+    return true;
+  }
+  return CModalDialog::OnButtonClicked(buttonID, buttonHWND);
 }
 
 // ---- CPasswordDialog ----
@@ -107,10 +98,7 @@ bool CPasswordDialog::OnInit()
 
   _passwordEdit.Attach(GetItem(IDE_PASSWORD_PASSWORD));
 
-  _vault.SetPath(CPasswordVault::GetConfiguredPath());
-  UString error;
-  if (!_vault.Load(*this, error))
-    VaultErrorMessage(*this, error);
+  _vaultUi.Load(*this);
 
   CheckButton(IDX_PASSWORD_SHOW, ShowPassword);
   SetTextSpec();
@@ -121,153 +109,17 @@ bool CPasswordDialog::OnCommand(unsigned code, unsigned itemID, LPARAM lParam)
 {
   if (code == EN_CHANGE && itemID == IDE_PASSWORD_PASSWORD)
   {
-    OnPasswordTextChanged();
+    _vaultUi.ScheduleAutoType(*this, _passwordEdit);
     return true;
   }
   return CDialog::OnCommand(code, itemID, lParam);
 }
 
-/* If the user types a name that is stored in the vault, offer to type that
-   entry's password. The setting decides between filling it silently and
-   asking first. */
-void CPasswordDialog::OnPasswordTextChanged()
+bool CPasswordDialog::OnTimer(WPARAM timerID, LPARAM lParam)
 {
-  if (_typingGuard)
-    return;
-
-  UString text;
-  _passwordEdit.GetText(text);
-  if (text.IsEmpty() || text == _lastPromptedName)
-    return;
-
-  const int index = _vault.FindByName(text);
-  if (index < 0)
-    return;
-
-  _lastPromptedName = text;
-  const UString &value = _vault.Entries()[(unsigned)index].Password;
-
-  NPasswordVault::CInfo settings;
-  settings.Load();
-
-  bool useIt = settings.AutoTypeByName;
-  if (!useIt)
-  {
-    UString message = GetLangText(IDT_PASSWORD_AUTOTYPE_Q, L"");
-    message += L"\r\n\r\n";
-    message += text;
-    useIt = (::MessageBoxW(*this, message, PasswordVault_GetCaption(),
-        MB_ICONQUESTION | MB_YESNO) == IDYES);
-  }
-
-  if (!useIt)
-    return;
-
-  _typingGuard = true;
-  Password = value;
-  SetTextSpec();
-  _typingGuard = false;
-}
-
-void CPasswordDialog::ShowSavedPasswords()
-{
-  CPasswordListDialog dialog(&_vault, _passwordEdit);
-  dialog.Create(*this);
-
-  /* The list window writes a picked password straight into the edit box,
-     so re-read it. */
-  _typingGuard = true;
-  _passwordEdit.GetText(Password);
-  _typingGuard = false;
-  _lastPromptedName.Empty();
-}
-
-void CPasswordDialog::CreateNewPassword()
-{
-  UString current;
-  _passwordEdit.GetText(current);
-
-  CPasswordEditDialog dialog(true);
-  dialog.Value = current;
-  if (dialog.Create(*this) != IDOK)
-    return;
-
-  UString name = dialog.Name;
-  name.Trim();
-  if (name.IsEmpty())
-    name = PasswordVault_MakeDefaultName(_vault);
-
-  const int index = _vault.FindByName(name);
-  if (index >= 0)
-    _vault.Entries()[(unsigned)index].Password = dialog.Value;
-  else
-  {
-    CPasswordVaultEntry entry;
-    entry.Name = name;
-    entry.Password = dialog.Value;
-    _vault.Entries().Add(entry);
-  }
-
-  UString error;
-  if (!_vault.Save(error))
-  {
-    VaultErrorMessage(*this, error);
-    return;
-  }
-
-  _typingGuard = true;
-  Password = dialog.Value;
-  SetTextSpec();
-  _typingGuard = false;
-  _lastPromptedName.Empty();
-}
-
-/* Called from OnOK: if the password is not in the vault yet, offer to store it. */
-void CPasswordDialog::MaybeOfferToSave()
-{
-  if (Password.IsEmpty())
-    return;
-
-  NPasswordVault::CInfo settings;
-  settings.Load();
-  if (!settings.PromptToSaveNew)
-    return;
-
-  {
-    const CObjectVector<CPasswordVaultEntry> &entries = _vault.Entries();
-    FOR_VECTOR(i, entries)
-      if (entries[i].Password == Password)
-        return; /* already stored */
-  }
-
-  if (::MessageBoxW(*this, GetLangText(IDT_PASSWORD_SAVE_NEW_Q, L""),
-      PasswordVault_GetCaption(), MB_ICONQUESTION | MB_YESNO) != IDYES)
-    return;
-
-  CPasswordEditDialog dialog(true);
-  dialog.Value = Password;
-  if (dialog.Create(*this) != IDOK)
-    return;
-
-  UString name = dialog.Name;
-  name.Trim();
-  if (name.IsEmpty())
-    name = PasswordVault_MakeDefaultName(_vault);
-
-  const int index = _vault.FindByName(name);
-  if (index >= 0)
-    _vault.Entries()[(unsigned)index].Password = dialog.Value;
-  else
-  {
-    CPasswordVaultEntry entry;
-    entry.Name = name;
-    entry.Password = dialog.Value;
-    _vault.Entries().Add(entry);
-  }
-
-  UString error;
-  if (!_vault.Save(error))
-    VaultErrorMessage(*this, error);
+  if (_vaultUi.OnTimer(*this, timerID, _passwordEdit))
+    return true;
+  return CModalDialog::OnTimer(timerID, lParam);
 }
 
 bool CPasswordDialog::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
@@ -279,10 +131,19 @@ bool CPasswordDialog::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
       SetTextSpec();
       return true;
     case IDB_PASSWORD_LIST:
-      ShowSavedPasswords();
+      ReadControls();
+      if (_vaultUi.ShowList(*this, _passwordEdit))
+      {
+        /* The list window wrote into the edit box; read it back so the OK path
+           uses what the user picked. */
+        _passwordEdit.GetText(Password);
+      }
       return true;
     case IDB_PASSWORD_NEW:
-      CreateNewPassword();
+      ReadControls();
+      _vaultUi.CreateNew(*this, &_passwordEdit);
+      /* Whatever was just stored becomes the password of this dialog. */
+      _passwordEdit.GetText(Password);
       return true;
   }
   return CDialog::OnButtonClicked(buttonID, buttonHWND);
@@ -291,6 +152,6 @@ bool CPasswordDialog::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
 void CPasswordDialog::OnOK()
 {
   ReadControls();
-  MaybeOfferToSave();
+  _vaultUi.OfferToSave(*this, Password);
   CModalDialog::OnOK();
 }

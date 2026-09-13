@@ -606,10 +606,11 @@ static LPCTSTR const kVaultPath = TEXT("VaultPath");
 static LPCTSTR const kUseMasterPassword = TEXT("UseMasterPassword");
 static LPCTSTR const kRememberMasterPassword = TEXT("RememberMasterPassword");
 static LPCTSTR const kAutoLockMaster = TEXT("AutoLockMaster");
-static LPCTSTR const kEditByRightClick = TEXT("EditByRightClick");
+static LPCTSTR const kCloseAfterFill = TEXT("CloseAfterFill");
 static LPCTSTR const kAutoTypeByName = TEXT("AutoTypeByName");
 static LPCTSTR const kPromptToSaveNew = TEXT("PromptToSaveNew");
 static LPCTSTR const kShowPasswordInList = TEXT("ShowPasswordInList");
+static LPCTSTR const kShowPasswordForUnnamed = TEXT("ShowPasswordForUnnamed");
 
 void CInfo::Save() const
 {
@@ -620,10 +621,11 @@ void CInfo::Save() const
   key.SetValue(kUseMasterPassword, UseMasterPassword);
   key.SetValue(kRememberMasterPassword, RememberMasterPassword);
   key.SetValue(kAutoLockMaster, AutoLockMaster);
-  key.SetValue(kEditByRightClick, EditByRightClick);
+  key.SetValue(kCloseAfterFill, CloseAfterFill);
   key.SetValue(kAutoTypeByName, AutoTypeByName);
   key.SetValue(kPromptToSaveNew, PromptToSaveNew);
   key.SetValue(kShowPasswordInList, ShowPasswordInList);
+  key.SetValue(kShowPasswordForUnnamed, ShowPasswordForUnnamed);
 }
 
 void CInfo::Load()
@@ -632,10 +634,11 @@ void CInfo::Load()
   UseMasterPassword = false;
   RememberMasterPassword = false;
   AutoLockMaster = true;      // safer default: lock the cached master password
-  EditByRightClick = false;   // double-click edits by default
+  CloseAfterFill = true;      // the list window closes once it filled a password
   AutoTypeByName = true;      // typing a saved name auto-fills its password
   PromptToSaveNew = true;     // ask before storing a new password
   ShowPasswordInList = false; // safer default: mask the saved passwords in the list
+  ShowPasswordForUnnamed = false; // an unnamed entry stays masked too, unless asked
 
   CS_LOCK
   CKey key;
@@ -648,9 +651,10 @@ void CInfo::Load()
   key.GetValue_bool_IfOk(kUseMasterPassword, UseMasterPassword);
   key.GetValue_bool_IfOk(kRememberMasterPassword, RememberMasterPassword);
   key.GetValue_bool_IfOk(kAutoLockMaster, AutoLockMaster);
-  key.GetValue_bool_IfOk(kEditByRightClick, EditByRightClick);
+  key.GetValue_bool_IfOk(kCloseAfterFill, CloseAfterFill);
   key.GetValue_bool_IfOk(kAutoTypeByName, AutoTypeByName);
   key.GetValue_bool_IfOk(kPromptToSaveNew, PromptToSaveNew);
   key.GetValue_bool_IfOk(kShowPasswordInList, ShowPasswordInList);
+  key.GetValue_bool_IfOk(kShowPasswordForUnnamed, ShowPasswordForUnnamed);
 }
 }

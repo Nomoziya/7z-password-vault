@@ -26,6 +26,9 @@
 
 #include "CompressDialog.h"
 
+/* Password vault: shared with the extract password dialog. */
+#include "../FileManager/PasswordVaultUi.h"
+
 #ifndef _UNICODE
 extern bool g_IsNT;
 #endif
@@ -56,6 +59,8 @@ static const UInt32 kLangIDs[] =
   IDT_COMPRESS_PARAMETERS,
   
   IDB_COMPRESS_OPTIONS, // IDS_OPTIONS
+  IDB_PASSWORD_LIST,
+  IDB_PASSWORD_NEW,
 
   IDG_COMPRESS_OPTIONS,
   IDX_COMPRESS_SFX,
@@ -460,6 +465,10 @@ bool CCompressDialog::OnInit()
 
   _password1Control.Attach(GetItem(IDE_COMPRESS_PASSWORD1));
   _password2Control.Attach(GetItem(IDE_COMPRESS_PASSWORD2));
+  /* A filled password goes into both fields: this dialog asks twice, and the
+     two fields would otherwise disagree. */
+  _vaultUi.SetSyncEdit(&_password2Control);
+  _vaultUi.Load(*this);
   _password1Control.SetText(Info.Password);
   _password2Control.SetText(Info.Password);
   _encryptionMethod.Attach(GetItem(IDC_COMPRESS_ENCRYPTION_METHOD));
@@ -602,6 +611,16 @@ bool CCompressDialog::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
     case IDX_PASSWORD_SHOW:
     {
       UpdatePasswordControl();
+      return true;
+    }
+    case IDB_PASSWORD_LIST:
+    {
+      _vaultUi.ShowList(*this, _password1Control);
+      return true;
+    }
+    case IDB_PASSWORD_NEW:
+    {
+      _vaultUi.CreateNew(*this, &_password1Control);
       return true;
     }
     case IDB_COMPRESS_OPTIONS:
@@ -1063,8 +1082,24 @@ void SetErrorMessage_MemUsage(UString &s, UInt64 reqSize, UInt64 ramSize, UInt64
 }
 
 
+bool CCompressDialog::OnTimer(WPARAM timerID, LPARAM lParam)
+{
+  if (_vaultUi.OnTimer(*this, timerID, _password1Control))
+    return true;
+  return CModalDialog::OnTimer(timerID, lParam);
+}
+
 void CCompressDialog::OnOK()
 {
+  {
+    /* Offer to remember a password that is not in the vault yet. Only when the
+       password field is in use: a format without encryption leaves whatever text
+       was remembered in a disabled field, and that password is not being used. */
+    UString password;
+    _password1Control.GetText(password);
+    if (IsWindowEnabled((HWND)_password1Control))
+      _vaultUi.OfferToSave(*this, password);
+  }
   _password1Control.GetText(Info.Password);
   if (IsZipFormat())
   {
@@ -1312,6 +1347,12 @@ bool CCompressDialog::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
 
 bool CCompressDialog::OnCommand(unsigned code, unsigned itemID, LPARAM lParam)
 {
+  if (code == EN_CHANGE && itemID == IDE_COMPRESS_PASSWORD1)
+  {
+    _vaultUi.ScheduleAutoType(*this, _password1Control);
+    return true;
+  }
+
   if (code == CBN_SELCHANGE)
   {
     switch (itemID)

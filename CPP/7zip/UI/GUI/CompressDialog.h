@@ -13,6 +13,8 @@
 
 #include "../FileManager/DialogSize.h"
 
+#include "../FileManager/PasswordVaultUi.h"
+
 #include "CompressDialogRes.h"
 
 namespace NCompressDialog
@@ -171,6 +173,9 @@ private:
   NWindows::NControl::CComboBox m_UpdateMode;
   NWindows::NControl::CComboBox m_PathMode;
   
+  /* Saved passwords: the same behaviour as in the extract password dialog. */
+  CPasswordVaultUi _vaultUi;
+
   NWindows::NControl::CEdit _password1Control;
   NWindows::NControl::CEdit _password2Control;
   NWindows::NControl::CComboBox _encryptionMethod;
@@ -359,6 +364,7 @@ public:
   virtual bool OnMessage(UINT message, WPARAM wParam, LPARAM lParam) Z7_override;
   virtual bool OnCommand(unsigned code, unsigned itemID, LPARAM lParam) Z7_override;
   virtual bool OnButtonClicked(unsigned buttonID, HWND buttonHWND) Z7_override;
+  virtual bool OnTimer(WPARAM timerID, LPARAM lParam) Z7_override;
   virtual void OnOK() Z7_override;
   virtual void OnHelp() Z7_override;
 

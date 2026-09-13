@@ -8,8 +8,10 @@
 
 #include "PasswordDialogRes.h"
 #include "PasswordVault.h"
+#include "PasswordVaultUi.h"
 
-/* "new password" / "edit password" dialog: one name (optional) + one password. */
+/* "new password" / "edit password" dialog: one name (optional) + one password.
+   When it was opened for a stored entry it also offers to delete that entry. */
 class CPasswordEditDialog: public NWindows::NControl::CModalDialog
 {
   NWindows::NControl::CEdit _nameEdit;
@@ -18,44 +20,36 @@ class CPasswordEditDialog: public NWindows::NControl::CModalDialog
 
   virtual bool OnInit() Z7_override;
   virtual void OnOK() Z7_override;
+  virtual bool OnButtonClicked(unsigned buttonID, HWND buttonHWND) Z7_override;
 public:
   UString Name;
   UString Value;
+  /* Set when the user asked to delete the entry instead of saving it. */
+  bool Deleted;
 
-  CPasswordEditDialog(bool isNew): _isNew(isNew) {}
+  CPasswordEditDialog(bool isNew): _isNew(isNew), Deleted(false) {}
   INT_PTR Create(HWND parentWindow = NULL) { return CModalDialog::Create(IDD_PASSWORD_EDIT, parentWindow); }
 };
 
 class CPasswordDialog: public NWindows::NControl::CModalDialog
 {
   NWindows::NControl::CEdit _passwordEdit;
-  CPasswordVault _vault;
-
-  /* Re-entrancy guard: SetTextSpec() changes the edit text, which generates
-     EN_CHANGE; that must not be treated as the user typing a name. */
-  bool _typingGuard;
-  UString _lastPromptedName;
+  CPasswordVaultUi _vaultUi;
 
   virtual void OnOK() Z7_override;
   virtual bool OnInit() Z7_override;
   virtual bool OnCommand(unsigned code, unsigned itemID, LPARAM lParam) Z7_override;
   virtual bool OnButtonClicked(unsigned buttonID, HWND buttonHWND) Z7_override;
+  virtual bool OnTimer(WPARAM timerID, LPARAM lParam) Z7_override;
 
   void SetTextSpec();
   void ReadControls();
-  void OnPasswordTextChanged();
-  void ShowSavedPasswords();
-  void CreateNewPassword();
-  void MaybeOfferToSave();
 public:
   UString Password;
   bool ShowPassword;
 
-  CPasswordDialog(): _typingGuard(false), ShowPassword(false) {}
+  CPasswordDialog(): ShowPassword(false) {}
   INT_PTR Create(HWND parentWindow = NULL) { return CModalDialog::Create(IDD_PASSWORD, parentWindow); }
 };
-
-/* Unique placeholder name used when the user leaves the name empty. */
-UString PasswordVault_MakeDefaultName(const CPasswordVault &vault);
 
 #endif

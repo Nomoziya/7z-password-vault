@@ -128,10 +128,15 @@ BEGIN
 
   GROUPBOX  "Encryption", IDG_COMPRESS_ENCRYPTION, g4x, yPsw, g4xs, GROUP_Y_SIZE_ENCRYPT
 
-  LTEXT     "Enter &password:", IDT_PASSWORD_ENTER, g4x2, yPsw + 14, g4xs2, 8
-  EDITTEXT  IDE_COMPRESS_PASSWORD1, g4x2, yPsw + 26, g4xs2, 14, ES_PASSWORD | ES_AUTOHSCROLL
-  LTEXT     "Reenter password:", IDT_PASSWORD_REENTER, g4x2, yPsw + 46, g4xs2, 8
-  EDITTEXT  IDE_COMPRESS_PASSWORD2, g4x2, yPsw + 58, g4xs2, 14, ES_PASSWORD | ES_AUTOHSCROLL
+  /* The two vault buttons sit beside the password fields rather than next to the
+     "Show Password" checkbox: at English label lengths three controls do not fit
+     in one row of g4xs2 (measured: "Saved passwords..." alone needs 154 px). */
+  LTEXT     "Enter &password:", IDT_PASSWORD_ENTER, g4x2, yPsw + 14, 96, 8
+  EDITTEXT  IDE_COMPRESS_PASSWORD1, g4x2, yPsw + 26, 96, 14, ES_PASSWORD | ES_AUTOHSCROLL
+  PUSHBUTTON "Saved passwords...", IDB_PASSWORD_LIST, g4x2 + 100, yPsw + 24, 76, 14
+  LTEXT     "Reenter password:", IDT_PASSWORD_REENTER, g4x2, yPsw + 46, 96, 8
+  EDITTEXT  IDE_COMPRESS_PASSWORD2, g4x2, yPsw + 58, 96, 14, ES_PASSWORD | ES_AUTOHSCROLL
+  PUSHBUTTON "New password...", IDB_PASSWORD_NEW, g4x2 + 100, yPsw + 42, 76, 14
 
   CONTROL   "Show Password", IDX_PASSWORD_SHOW, MY_CHECKBOX,
             g4x2, yPsw + 79, g4xs2, 10

@@ -25,6 +25,12 @@
 // #define IDC_COMPRESS_DICTIONARY2         118
 
 #define IDE_COMPRESS_PASSWORD1           120
+
+/* Password vault buttons. The ids are the same as in the extract password
+   dialog (CPP/7zip/UI/FileManager/PasswordDialogRes.h), which is a separate
+   dialog and therefore a separate id namespace. */
+#define IDB_PASSWORD_LIST                3808
+#define IDB_PASSWORD_NEW                 3809
 #define IDE_COMPRESS_PASSWORD2           121
 #define IDC_COMPRESS_ENCRYPTION_METHOD   122
 

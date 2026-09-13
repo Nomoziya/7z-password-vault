@@ -138,6 +138,7 @@ FM_OBJS = \
   $O/PasswordDialog.o \
   $O/PasswordListDialog.o \
   $O/PasswordVault.o \
+        $O/PasswordVaultUi.o \
   $O/ProgressDialog2.o \
   $O/BrowseDialog.o \
   $O/ComboDialog.o \

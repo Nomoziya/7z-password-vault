@@ -411,7 +411,7 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
   return _masterMode ? Load_Master(parent, f, errorMessage) : Load_DPAPI(f, version, errorMessage);
 }
 
-bool CPasswordVault::Save(UString &errorMessage)
+bool CPasswordVault::Save(UString &errorMessage, HWND parent)
 {
   EnsureFolderExists(_path);
 
@@ -438,7 +438,7 @@ bool CPasswordVault::Save(UString &errorMessage)
       const Byte flags = useMaster ? 1 : 0;
       ok = WriteBuf(f, &flags, 1);
       if (ok)
-        ok = useMaster ? Save_Master(f, errorMessage) : Save_DPAPI(f, errorMessage);
+        ok = useMaster ? Save_Master(f, errorMessage, parent) : Save_DPAPI(f, errorMessage);
     }
 
     if (!ok && errorMessage.IsEmpty())
@@ -729,10 +729,10 @@ bool CPasswordVault::Save_DPAPI(COutFile &f, UString &errorMessage)
   return true;
 }
 
-bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage)
+bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage, HWND parent)
 {
   UString master;
-  if (!GetMasterPassword(NULL, master, errorMessage))
+  if (!GetMasterPassword(parent, master, errorMessage))
     return false;
 
   Byte salt[kSaltSize];
@@ -784,6 +784,11 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage)
 
 int CPasswordVault::FindByName(const UString &name) const
 {
+  /* An empty name is not an identifier: several entries may be unnamed, and an
+     empty name must never match one of them (otherwise saving an unnamed entry
+     would silently overwrite an existing unnamed one). */
+  if (name.IsEmpty())
+    return -1;
   FOR_VECTOR(i, _entries)
     if (_entries[i].Name == name)
       return (int)i;

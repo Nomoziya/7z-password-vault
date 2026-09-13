@@ -28,7 +28,7 @@ class CPasswordVault
   bool Load_DPAPI(NWindows::NFile::NIO::CInFile &f, Byte version, UString &errorMessage);
   bool Load_Master(HWND parent, NWindows::NFile::NIO::CInFile &f, UString &errorMessage);
   bool Save_DPAPI(NWindows::NFile::NIO::COutFile &f, UString &errorMessage);
-  bool Save_Master(NWindows::NFile::NIO::COutFile &f, UString &errorMessage);
+  bool Save_Master(NWindows::NFile::NIO::COutFile &f, UString &errorMessage, HWND parent);
 
   void SerializeEntries(CByteBuffer &out);
   bool ParseEntries(const Byte *data, size_t size, UString &errorMessage);
@@ -45,7 +45,10 @@ public:
 
   // parent is used only to show the master-password prompt when needed.
   bool Load(HWND parent, UString &errorMessage);
-  bool Save(UString &errorMessage);
+  /* parent is used only when the master password has to be asked for again
+     (the "remember" setting is off); it must be a window of the calling dialog,
+     otherwise the prompt would appear unowned and can end up behind it. */
+  bool Save(UString &errorMessage, HWND parent = NULL);
 
   int FindByName(const UString &name) const;
 

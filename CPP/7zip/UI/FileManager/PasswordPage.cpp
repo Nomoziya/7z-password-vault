@@ -25,13 +25,14 @@ static const UInt32 kLangIDs[] =
   IDB_PASSWORD_SET_MASTER,
   IDB_PASSWORD_CLEAR_MASTER,
   IDX_PASSWORD_SHOW_DEFAULT,
-  IDX_PASSWORD_EDIT_RIGHT,
+  IDX_PASSWORD_CLOSE_FILL,
   IDX_PASSWORD_AUTOTYPE,
   IDX_PASSWORD_PROMPT_SAVE,
   IDB_PASSWORD_VAULT_BROWSE,
   IDB_PASSWORD_EXPORT,
   IDB_PASSWORD_IMPORT,
-  IDX_PASSWORD_HIDE_LIST
+  IDX_PASSWORD_HIDE_LIST,
+  IDX_PASSWORD_UNNAMED_PW
 };
 #endif
 
@@ -91,10 +92,11 @@ bool CPasswordPage::OnInit()
   CheckButton(IDX_PASSWORD_USE_MASTER, settings.UseMasterPassword);
   CheckButton(IDX_PASSWORD_REMEMBER, settings.RememberMasterPassword);
   CheckButton(IDX_PASSWORD_AUTOLOCK, settings.AutoLockMaster);
-  CheckButton(IDX_PASSWORD_EDIT_RIGHT, settings.EditByRightClick);
+  CheckButton(IDX_PASSWORD_CLOSE_FILL, settings.CloseAfterFill);
   CheckButton(IDX_PASSWORD_AUTOTYPE, settings.AutoTypeByName);
   CheckButton(IDX_PASSWORD_PROMPT_SAVE, settings.PromptToSaveNew);
   CheckButton(IDX_PASSWORD_HIDE_LIST, settings.ShowPasswordInList);
+  CheckButton(IDX_PASSWORD_UNNAMED_PW, settings.ShowPasswordForUnnamed);
   CheckButton(IDX_PASSWORD_SHOW_DEFAULT, NExtract::Read_ShowPassword());
 
   _initMode = false;
@@ -114,6 +116,13 @@ void CPasswordPage::OnSetMasterPassword()
 {
   UString error;
   const UString vaultPath = GetVaultPathFromUi();
+
+  bool oldUseMaster = false;
+  {
+    NPasswordVault::CInfo before;
+    before.Load();
+    oldUseMaster = before.UseMasterPassword;
+  }
 
   /* Load the existing vault FIRST. If it is already encrypted with a master
      password, this asks for the OLD password (or uses the cached one).
@@ -144,6 +153,9 @@ void CPasswordPage::OnSetMasterPassword()
     return;
   }
 
+  /* The mode has to be stored BEFORE the file is written, because Save() takes it
+     from the settings. A failed write therefore stores the previous mode again,
+     so the setting and the file can never end up disagreeing. */
   {
     NPasswordVault::CInfo settings;
     settings.Load();
@@ -154,8 +166,13 @@ void CPasswordPage::OnSetMasterPassword()
 
   CPasswordVault::SetCachedMasterPassword(pw1);
 
-  if (!vault.Save(error))
+  if (!vault.Save(error, *this))
   {
+    NPasswordVault::CInfo back;
+    back.Load();
+    back.UseMasterPassword = oldUseMaster;
+    back.Save();
+    CPasswordVault::ClearCachedMasterPassword();
     ErrorBox(*this, error);
     return;
   }
@@ -186,6 +203,8 @@ void CPasswordPage::OnClearMasterPassword()
       PasswordVault_GetCaption(), MB_ICONQUESTION | MB_YESNO) != IDYES)
     return;
 
+  /* Same as when setting it: store the mode, and put the previous one back if the
+     file cannot be written. */
   {
     NPasswordVault::CInfo settings;
     settings.Load();
@@ -195,8 +214,12 @@ void CPasswordPage::OnClearMasterPassword()
   }
   CPasswordVault::ClearCachedMasterPassword();
 
-  if (!vault.Save(error))
+  if (!vault.Save(error, *this))
   {
+    NPasswordVault::CInfo back;
+    back.Load();
+    back.UseMasterPassword = true;
+    back.Save();
     ErrorBox(*this, error);
     return;
   }
@@ -299,7 +322,7 @@ void CPasswordPage::OnImport()
     }
   }
 
-  if (!dst.Save(error))
+  if (!dst.Save(error, *this))
   {
     ErrorBox(*this, error);
     return;
@@ -335,9 +358,10 @@ bool CPasswordPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
     case IDX_PASSWORD_USE_MASTER:
     case IDX_PASSWORD_REMEMBER:
     case IDX_PASSWORD_AUTOLOCK:
-    case IDX_PASSWORD_EDIT_RIGHT:
+    case IDX_PASSWORD_CLOSE_FILL:
     case IDX_PASSWORD_AUTOTYPE:
     case IDX_PASSWORD_HIDE_LIST:
+    case IDX_PASSWORD_UNNAMED_PW:
     case IDX_PASSWORD_PROMPT_SAVE:
     case IDX_PASSWORD_SHOW_DEFAULT:
       ModifiedEvent();
@@ -368,54 +392,72 @@ LONG CPasswordPage::OnApply()
   const bool newUseMaster = IsButtonCheckedBool(IDX_PASSWORD_USE_MASTER);
   const bool remember = IsButtonCheckedBool(IDX_PASSWORD_REMEMBER);
 
-  NPasswordVault::CInfo settings;
-  settings.Load();
-  settings.VaultPath = us2fs(pathU);
-  settings.UseMasterPassword = newUseMaster;
-  settings.RememberMasterPassword = remember;
-  settings.AutoLockMaster = IsButtonCheckedBool(IDX_PASSWORD_AUTOLOCK);
-  settings.EditByRightClick = IsButtonCheckedBool(IDX_PASSWORD_EDIT_RIGHT);
-  settings.AutoTypeByName = IsButtonCheckedBool(IDX_PASSWORD_AUTOTYPE);
-  settings.PromptToSaveNew = IsButtonCheckedBool(IDX_PASSWORD_PROMPT_SAVE);
-  settings.ShowPasswordInList = IsButtonCheckedBool(IDX_PASSWORD_HIDE_LIST);
-  settings.Save();
+  const UString oldPath = _oldVaultPath.IsEmpty() ? CPasswordVault::GetDefaultPath() : fs2us(_oldVaultPath);
+  const UString newPath = pathU.IsEmpty() ? CPasswordVault::GetDefaultPath() : pathU;
+  const bool pathChanged = (newPath != oldPath);
+  const bool modeChanged = (newUseMaster != _oldUseMaster);
+  const bool reEncrypt = (modeChanged || pathChanged);
+
+  /* The vault must be READ before the new mode is written: Load() takes the mode
+     from the settings, so reading an old-format file with the new mode already
+     stored would fail. It is rewritten below, and only a successful rewrite
+     leaves the new mode stored. */
+  CPasswordVault vault;
+  if (reEncrypt)
+  {
+    UString error;
+    vault.SetPath(oldPath);
+    if (!vault.Load(*this, error))
+    {
+      ErrorBox(*this, error);
+      return PSNRET_INVALID_NOCHANGEPAGE;
+    }
+  }
+
+  {
+    NPasswordVault::CInfo settings;
+    settings.Load();
+    settings.VaultPath = us2fs(pathU);
+    settings.UseMasterPassword = newUseMaster;
+    settings.RememberMasterPassword = remember;
+    settings.AutoLockMaster = IsButtonCheckedBool(IDX_PASSWORD_AUTOLOCK);
+    settings.CloseAfterFill = IsButtonCheckedBool(IDX_PASSWORD_CLOSE_FILL);
+    settings.AutoTypeByName = IsButtonCheckedBool(IDX_PASSWORD_AUTOTYPE);
+    settings.PromptToSaveNew = IsButtonCheckedBool(IDX_PASSWORD_PROMPT_SAVE);
+    settings.ShowPasswordInList = IsButtonCheckedBool(IDX_PASSWORD_HIDE_LIST);
+    settings.ShowPasswordForUnnamed = IsButtonCheckedBool(IDX_PASSWORD_UNNAMED_PW);
+    settings.Save();
+  }
 
   NExtract::Save_ShowPassword(IsButtonCheckedBool(IDX_PASSWORD_SHOW_DEFAULT));
 
   if (!remember)
     CPasswordVault::ClearCachedMasterPassword();
 
-  // Re-encrypt the vault when the encryption mode or the location changed.
-  const UString oldPath = _oldVaultPath.IsEmpty() ? CPasswordVault::GetDefaultPath() : fs2us(_oldVaultPath);
-  const UString newPath = pathU.IsEmpty() ? CPasswordVault::GetDefaultPath() : pathU;
-  const bool pathChanged = (newPath != oldPath);
-  const bool modeChanged = (newUseMaster != _oldUseMaster);
-
-  if (modeChanged || pathChanged)
+  if (reEncrypt)
   {
     UString error;
-    CPasswordVault vault;
-    vault.SetPath(oldPath);
-    if (!vault.Load(*this, error))
+    vault.SetPath(newPath);
+    if (!vault.Save(error, *this))
     {
+      /* Store the previous mode again: a stored mode that does not match the file
+         would make the vault unreadable. */
+      NPasswordVault::CInfo back;
+      back.Load();
+      back.UseMasterPassword = _oldUseMaster;
+      back.Save();
       ErrorBox(*this, error);
+      return PSNRET_INVALID_NOCHANGEPAGE;
     }
-    else
+
+    if (pathChanged && FileExists(oldPath))
     {
-      vault.SetPath(newPath);
-      if (!vault.Save(error))
-      {
-        ErrorBox(*this, error);
-      }
-      else if (pathChanged && FileExists(oldPath))
-      {
-        UString msg = L"密码库已写入新位置：\r\n";
-        msg += newPath;
-        msg += L"\r\n\r\n是否删除旧位置的密码库文件？\r\n";
-        msg += oldPath;
-        if (::MessageBoxW(*this, msg, PasswordVault_GetCaption(), MB_ICONQUESTION | MB_YESNO) == IDYES)
-          ::DeleteFileW(oldPath);
-      }
+      UString msg = L"密码库已写入新位置：\r\n";
+      msg += newPath;
+      msg += L"\r\n\r\n是否删除旧位置的密码库文件？\r\n";
+      msg += oldPath;
+      if (::MessageBoxW(*this, msg, PasswordVault_GetCaption(), MB_ICONQUESTION | MB_YESNO) == IDYES)
+        ::DeleteFileW(oldPath);
     }
   }
 

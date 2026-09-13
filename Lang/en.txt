@@ -256,13 +256,15 @@ Show password by default
 Set master password...
 Browse...
 Clear master password...
-Edit saved entries with right-click (else double-click)
+Close the window after a saved password was typed in
 Type a saved name to fill its password automatically
 Ask to save passwords that are not in the vault
 Export vault...
 Import vault...
 2614
 Show saved passwords in the list
+2615
+Show password of unnamed entries (easier to find)
 2900
 About 7-Zip
 7-Zip is free software
@@ -376,7 +378,7 @@ Password:
 Master password
 Master password:
 Saved passwords
-Click a name or password to fill it in; double-click to edit; click Delete to remove the entry.
+Select a saved password and press Fill; a double click on a row does the same.
 Close
 Name
 Password
@@ -391,6 +393,14 @@ A saved password has this name. Fill in its password?
 7-Zip Password Vault
 3829
 Show passwords
+3830
+&Delete
+3831
+&Fill password
+3832
+&Edit...
+3833
+(unnamed)
 3900
 Elapsed time:
 Remaining time:

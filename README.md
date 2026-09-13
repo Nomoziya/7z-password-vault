@@ -14,18 +14,27 @@ A modified build of **7-Zip 26.03** with an integrated, encrypted, named passwor
 2. **Hybrid encryption** (choose in Settings):
    - **DPAPI (default)** — tied to your Windows account + machine, no master password needed.
    - **AES-256-GCM + master password (optional)** — portable; move/backup the vault to another machine.
-3. **Saved-passwords window** — a 3 column table (`Name | Password | Delete`):
-   - **single click** on the Name or Password cell types that password into the input box;
-   - **double click** (or **right click**, per the setting) opens the edit dialog;
-   - **click Delete** removes the row after a confirmation prompt;
-   - the password column shows `********` unless you ask to see the passwords: the
-     **Show passwords** checkbox in the window reveals them, and pressing a masked cell
-     still fills the real password into the input box.
-4. **New password window** — name + password; the name may be left empty and a unique one is generated.
+3. **Saved-passwords window** — an ordinary two column list (`Name | Password`) with two
+   ordinary buttons beneath it, so it looks and behaves like the rest of 7-Zip:
+   - **Fill password** types the selected entry's password into the input box and closes
+     the window (a setting keeps it open instead); **double clicking a row** does the same;
+   - **Edit...** opens the selected entry for changing it or deleting it (with a
+     confirmation prompt);
+   - the password column shows dots unless you ask to see the passwords: the
+     **Show passwords** checkbox in the window reveals them, and Fill still types the
+     real password while the row is masked;
+   - optionally **only the unnamed entries** show their password, so an entry saved
+     without a name can still be found (see the settings page below). A
+     master-password vault shows nothing until it has been unlocked.
+4. **New password window** — name + password. The name may be left empty and the entry then
+   stays **unnamed**, so no generated name can ever collide with a password you type.
 5. **Auto-type by name** — typing the name of a saved entry in the password box fills its password.
 6. **Offer to save** — entering a password that is not stored yet asks whether to save it.
 7. **Password management settings page** — 7-Zip "Tools → Options" gains a new "Password manager" page.
-8. **Localized UI** — every new dialog and option is localized (English / 简体中文 / 繁體中文 included).
+8. **The same vault in the Add-to-Archive dialog** — 7zG's "Add to Archive" window has the
+   same *Saved passwords...* / *New password...* buttons, fills **both** password fields,
+   fills by typed name and offers to store a new password.
+9. **Localized UI** — every new dialog and option is localized (English / 简体中文 / 繁體中文 included).
 
 > The file manager loads its language file as `Lang\<lang>.txt` and never `.ttt`, so an English
 > UI needs `Lang\en.txt` (a copy of the `en.ttt` template, which this repository ships). Without
@@ -34,6 +43,11 @@ A modified build of **7-Zip 26.03** with an integrated, encrypted, named passwor
 
 ![Saved passwords window](docs/saved-passwords-window.png)
 
+With the passwords shown, the name column keeps its content width and the password
+column takes the rest, so a long password is readable even when the name is short:
+
+![Passwords revealed](docs/saved-passwords-window-revealed.png)
+
 ### Saved-passwords window
 
 Open it with the **Saved passwords...** button in the password dialog. It stays open while you pick,
@@ -41,11 +55,10 @@ so you can compare several entries; the hint line shows which entry was filled.
 
 | Action | Result |
 |--------|--------|
-| Click the **Name** or **Password** cell | That entry's password is typed into the input box (the window stays open) |
-| Double click a row | Opens the **Edit password** window (default) |
-| Right click a row | Opens the **Edit password** window (only when the setting is enabled) |
-| Click **Delete** | Asks for confirmation, then deletes that entry |
-| Click **New password...** | Opens the new-entry window (name optional, empty name = generated name) |
+| Select a row, then click **Fill password** | Types that entry's password into the input box and closes the window (see the *Close the window...* setting) |
+| Double click a row | The same as **Fill password** |
+| Select a row, then click **Edit...** | Opens the **Edit password** window, which can also **Delete** the entry after a confirmation prompt |
+| Click **Show passwords** | Reveals the password column (masked by default); Fill works either way |
 | Click **Close** | Closes the window; the input box keeps whatever was filled |
 
 ### Settings page (Tools → Options → Password manager)
@@ -60,10 +73,11 @@ so you can compare several entries; the hint line shows which entry was filled.
 | Remember master password this session | Ask for the master password only once per run |
 | Auto-lock the master password after 5 idle minutes | Forget the cached master password after 5 minutes |
 | Show password by default | Show the password in clear text by default |
-| Edit saved passwords with the right mouse button | Right click edits instead of double click |
+| Close the window after a saved password was typed in | The Fill action closes the list window; switch off to keep it open and pick several entries |
 | Auto-fill the password when a saved name is typed | Turn off to be asked before filling |
 | Offer to save an unsaved password | Turn off to never be asked to store a new password |
 | Show saved passwords in the list | Reveal the password column by default; the list window also has its own **Show passwords** checkbox |
+| Show password of unnamed entries | An entry saved without a name has nothing in the name column, so it is hard to find. This shows the password of those rows only (named rows stay masked), which makes such entries identifiable. A master-password vault still shows nothing until it has been unlocked. |
 | Export vault... / Import vault... | Copy the vault to/from another file |
 
 ### Build
@@ -91,18 +105,26 @@ MSVC (nmake): use `GUI\makefile` and `FileManager\makefile` (already link `crypt
 
 ### Tests
 
-`tests\ui-test.ps1` drives the real dialogs of the built `7zFM.exe` through Win32 messages and
-real mouse input (no test framework needed):
+Two suites, both plain PowerShell (no test framework):
+
+| Suite | What it covers | Checks |
+|-------|----------------|--------|
+| `tests\core-test.ps1` | 7-Zip's own engine through `7z.exe`: create / list / test / extract for 7z, zip and tar, AES-256 and ZipCrypto zips, header encryption, wrong passwords, damaged and truncated archives, 60+ file and long-name archives | 39 |
+| `tests\ui-test.ps1` | the vault in the real dialogs of `7zFM.exe` / `7zG.exe`: fill, edit, delete, unnamed entries, showing the password of unnamed entries, many entries, name/password collisions, awkward names, Chinese names and passwords, master-password mode, moving (copying) a vault, export/import, the settings page, plus end-to-end runs where a vault password really extracts an archive and the compress dialog really encrypts one | 264 |
+| `tests\check-labels.ps1` | measures every label of every dialog against its control and reports the ones that are cut off — run it after adding or editing a translation | 0 clipped (en) |
+
+`tests\ui-test.ps1` drives the real dialogs through Win32 messages and real mouse input:
 
 ```powershell
 pwsh -NoProfile -File tests\ui-test.ps1
 pwsh -NoProfile -File tests\ui-test.ps1 -SevenZipDir "D:\path\to\7-Zip"
 pwsh -NoProfile -File tests\ui-test.ps1 -UiLang en      # against the English UI
+pwsh -NoProfile -File tests\core-test.ps1               # 7-Zip engine, no UI needed
+pwsh -NoProfile -File tests\check-labels.ps1 -UiLang en # are any labels cut off?
 ```
 
-It covers the vault round-trip, the saved-passwords window (pick / edit / delete), auto-typing,
-the save prompt, the generated name, the settings page and a set of corrupt-vault files. It exits
-non-zero when a check fails.
+It exits non-zero when a check fails. Both suites print `[PASS]`/`[FAIL]` per check; run them after
+every rebuild.
 
 * The run is **isolated from your own data**: it points `VaultPath` at a file inside its work
   directory and restores the whole `HKCU\Software\7-Zip\PasswordVault` key afterwards, also when
@@ -114,6 +136,11 @@ non-zero when a check fails.
   language; `-UiLang en` or `-UiLang zh-cn` force one. When a window is not found the run prints
   the titles it did find, to make a language mismatch obvious.
 * It stops only the `7zFM.exe` it started, so a file manager you have open is not killed.
+
+### Verifying the binaries
+
+`BUILD.md` records how the release binaries are produced, what they import, and what to do
+about the antivirus false positives that a modified, unsigned `7zG.exe` will always attract.
 
 ### Security
 
@@ -139,23 +166,33 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 2. **加密存储（混合方案）**：
    - **DPAPI（默认）**：Windows 账户 + 电脑绑定，免主密码；**名称与密码都加密**。
    - **AES-256-GCM + 主密码（可选）**：可移植，可备份/迁移到其它电脑。
-3. **已保存的密码窗口** —— 三列表格（`名称 | 密码 | 删除`）：
-   - **单击**名称或密码单元格 → 直接键入到输入框；
-   - **双击**（或在设置里改成**右键**）→ 打开修改窗口；
-   - **单击「删除」** → 二次确认后删除该行；
-   - 密码列默认显示为 `********`；窗口里的**「显示密码」**复选框可临时显示明文，
-     单击被遮挡的单元格仍然会把真实密码填入输入框。
-4. **新建密码窗口** —— 填写名称 + 密码；**名称可以留空**，会自动生成一个不重复的名称。
+3. **已保存的密码窗口** —— 普通的两列列表（`名称 | 密码`）加上两个普通按钮，
+   外观与操作方式都和 7-Zip 其它窗口一致：
+   - **填入密码** → 把选中那一条的密码键入输入框并关闭窗口（可在设置里改为保持打开）；
+     **双击整行**效果相同；
+   - **编辑...** → 打开选中那条进行修改，也可在窗口内**删除**（有二次确认）；
+   - 密码列默认显示为圆点；窗口里的**「显示密码」**复选框可临时显示明文，
+     被遮挡时「填入密码」依然键入真实密码；
+   - 也可以设置成**只让无名称的条目**直接显示密码（见下面设置页），
+     这样没起名字的条目也能找出来。设了主密码的密码库必须先解锁成功才会显示。
+4. **新建密码窗口** —— 填写名称 + 密码；**名称可以留空**，留空即保持**无名称**，
+   这样自动命名永远不会和用户输入的密码冲突。
 5. **按名称自动键入** —— 在密码框里输入已保存的名称，自动填入该名称下的密码。
 6. **提示保存** —— 输入密码库里没有的密码时，弹窗询问是否保存到密码库。
 7. **密码管理设置页** —— 7-Zip「工具 → 选项」新增「密码管理」页。
-8. **多语言** —— 新增对话框与选项均已本地化（英文 / 简体中文 / 繁体中文）。
+8. **压缩对话框同样接入密码库** —— 7zG 的「添加到压缩包」窗口也有「已保存的密码...」
+   与「新建密码...」按钮，会**同时填入两个密码框**，同样支持按名称填入与提示保存。
+9. **多语言** —— 新增对话框与选项均已本地化（英文 / 简体中文 / 繁体中文）。
 
 > 文件管理器只加载 `Lang\<语言>.txt`，**不会加载 `.ttt`**。因此英文界面需要 `Lang\en.txt`
 > （即 `en.ttt` 模板的副本，本仓库已提供）。缺少它时英文会退回内置资源字符串，而只存在于
 > 语言文件里的字符串（密码库消息框、列表提示、各种询问）会退回中文兜底文本。
 
 ![已保存的密码窗口](docs/saved-passwords-window.png)
+
+显示密码时，名称列保持内容宽度、密码列占满剩余空间，所以名称很短、密码很长时也能完整看清：
+
+![显示密码](docs/saved-passwords-window-revealed.png)
 
 ### 已保存的密码窗口
 
@@ -164,11 +201,10 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 
 | 操作 | 结果 |
 |------|------|
-| 单击**名称**或**密码**单元格 | 该条密码键入到输入框（窗口保持打开） |
-| 双击某一行 | 打开「修改密码」窗口（默认） |
-| 右键某一行 | 打开「修改密码」窗口（需在设置中开启） |
-| 单击**删除** | 二次确认后删除该条 |
-| 单击**新建密码...** | 打开新建窗口（名称可留空，留空则自动命名） |
+| 选中一行后单击**填入密码** | 该条密码键入到输入框，随后关闭窗口（见「填入密码后关闭窗口」设置） |
+| 双击某一行 | 与**填入密码**相同 |
+| 选中一行后单击**编辑...** | 打开「修改密码」窗口，窗口内可**删除**该条（有二次确认） |
+| 单击**显示密码** | 显示明文密码列（默认以圆点遮挡）；遮挡时「填入密码」照常可用 |
 | 单击**关闭** | 关闭窗口，输入框中已填入的内容保留 |
 
 ### 密码管理设置页（工具 → 选项 → 密码管理）
@@ -183,10 +219,11 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 | 本次会话记住主密码 | 开启后本次运行只输入一次主密码 |
 | 主密码闲置 5 分钟后自动锁定 | 闲置 5 分钟后清除内存中缓存的主密码 |
 | 默认显示密码 | 密码框默认显示明文 |
-| 使用右键编辑已存密码（否则为双击） | 用右键代替双击来修改 |
+| 填入密码后关闭窗口 | 点「填入」后关闭列表窗口；关闭该选项则保持打开，便于连续挑选 |
 | 输入已保存的名称时自动填入密码 | 关闭后改为先询问再填入 |
 | 输入未保存的密码时提示保存 | 关闭后不再询问是否保存新密码 |
 | 在列表中显示已保存的密码 | 默认在列表中显示明文；列表窗口里也有自己的「显示密码」复选框 |
+| 未命名条目直接显示密码 | 没起名字的条目在名称列是空的，很难辨认；开启后**只有这些条目**直接显示密码（有名称的仍然打码），方便查找。设了主密码的密码库必须先解锁成功才会有内容显示。 |
 | 导出密码库... / 导入密码库... | 把密码库复制到 / 从其它文件导入 |
 
 ### 构建
@@ -214,17 +251,24 @@ MSVC（nmake）：使用 `GUI\makefile` 与 `FileManager\makefile`（已链接 `
 
 ### 测试
 
-`tests\ui-test.ps1` 通过 Win32 消息与真实鼠标输入驱动构建出的 `7zFM.exe` 真实对话框，
-不需要任何测试框架：
+两套测试，均为纯 PowerShell，不需要测试框架：
+
+| 测试 | 覆盖内容 | 项数 |
+|------|----------|------|
+| `tests\core-test.ps1` | 通过 `7z.exe` 验证 7-Zip 引擎本身：7z / zip / tar 的创建·列表·校验·解压、AES-256 与 ZipCrypto、加密文件名、错误密码、损坏与截断压缩包、60+ 文件与超长文件名 | 39 |
+| `tests\ui-test.ps1` | 真实对话框里的密码库：填入 / 编辑 / 删除、无名称条目、未命名条目直接显示密码、多条目、名称与密码冲突、特殊名称、中文名称与中文密码、主密码模式、密码库搬家（复制到别的路径）、导出 / 导入，以及**端到端**（密码库里的密码真的解开了压缩包、压缩对话框真的加密了压缩包） | 264 |
+| `tests\check-labels.ps1` | 逐一测量每个对话框中每个标签的文本宽度与控件宽度，报告被截断的标签 —— 新增或修改翻译后应运行 | 英文 0 处截断 |
+
+`tests\ui-test.ps1` 通过 Win32 消息与真实鼠标输入驱动真实对话框：
 
 ```powershell
 pwsh -NoProfile -File tests\ui-test.ps1
 pwsh -NoProfile -File tests\ui-test.ps1 -SevenZipDir "D:\path\to\7-Zip"
 pwsh -NoProfile -File tests\ui-test.ps1 -UiLang en      # against the English UI
+pwsh -NoProfile -File tests\core-test.ps1               # 7-Zip 引擎，无需界面
 ```
 
-覆盖：密码库往返、已保存密码窗口（填入 / 修改 / 删除）、自动键入、保存提示、自动命名、
-设置页、以及一组损坏的密码库文件（必须报错且不崩溃）。有失败项时以非零码退出。
+有失败项时以非零码退出，两项逐条打印 `[PASS]`/`[FAIL]`；每次重新构建后都应运行。
 
 * 测试与**你自己的数据完全隔离**：它把 `VaultPath` 指向自己工作目录下的文件，并在结束后
   （即使中途崩溃）整体恢复 `HKCU\Software\7-Zip\PasswordVault` 键。`%APPDATA%\7-Zip`
@@ -240,7 +284,11 @@ pwsh -NoProfile -File tests\ui-test.ps1 -UiLang en      # against the English UI
 | 文件 | 说明 |
 |------|------|
 | `CPP/7zip/UI/FileManager/PasswordVault.h` / `.cpp` | 新增：DPAPI + AES-256-GCM 混合加密、密码库存储、主密码对话框 |
-| `CPP/7zip/UI/FileManager/PasswordListDialog.h` / `.cpp` | 新增：三列「已保存的密码」窗口（填入 / 修改 / 删除） |
+| `CPP/7zip/UI/FileManager/PasswordListDialog.h` / `.cpp` | 新增：四列「已保存的密码」窗口（名称 / 密码 / 填入 / 编辑） |
+| `CPP/7zip/UI/FileManager/PasswordVaultUi.h` / `.cpp` | 新增：解压与压缩对话框共用的密码库交互（填入 / 新建 / 按名称填入 / 提示保存） |
+| `CPP/7zip/UI/GUI/CompressDialog.h` / `.cpp` / `.rc` / `CompressDialogRes.h` | 修改：「添加到压缩包」窗口接入密码库 |
+| `BUILD.md` | 新增：构建复现、二进制校验、杀毒误报与代码签名说明 |
+| `tests/core-test.ps1` | 新增：7-Zip 引擎功能测试（创建 / 校验 / 解压 / 加密 / 损坏包） |
 | `CPP/7zip/UI/FileManager/PasswordDialog.h` / `.cpp` / `.rc` / `PasswordDialogRes.h` | 修改：密码对话框改为「已保存的密码... / 新建密码...」按钮，新增新建/修改窗口、按名称自动键入、保存提示 |
 | `CPP/7zip/UI/FileManager/PasswordPage.h` / `.cpp` / `.rc` / `PasswordPageRes.h` | 新增：密码管理设置页（含导出/导入、清除主密码） |
 | `CPP/7zip/UI/FileManager/OptionsDialog.cpp` | 修改：注册密码管理设置页 |
@@ -250,7 +298,7 @@ pwsh -NoProfile -File tests\ui-test.ps1 -UiLang en      # against the English UI
 | `CPP/7zip/UI/FileManager/FM.mak` / `makefile.gcc` | 修改：FM 构建文件（链接 bcrypt） |
 | `CPP/7zip/7zip_gcc.mak` | 修改：新增编译规则、链接 bcrypt、**头文件依赖跟踪（-MMD -MP）** |
 | `Lang/en.ttt` / `en.txt` / `zh-cn.txt` / `zh-tw.txt` | 修改：新增界面字符串本地化（`en.txt` 为英文界面实际加载的文件） |
-| `tests/ui-test.ps1` | 新增：UI 冒烟测试 |
+| `tests/ui-test.ps1` | 新增：界面与端到端测试（153 项） |
 
 ### 开发注意（重要）
 
@@ -271,6 +319,11 @@ make -f ../../cmpl_gcc.mak
 - 密码库采用**临时文件 + 原子替换**写入，写入过程中崩溃/断电不会损坏已有密码库。
 - 读取时会校验条数、名称长度、密文长度与 PBKDF2 迭代次数，避免损坏文件导致巨额内存分配或长时间卡死。
 - 主密码、派生密钥、明文缓冲在使用后会被**主动清零**。
+
+### 校验二进制 / 误报处理
+
+`BUILD.md` 记录了发布包里两个 exe 的构建方式、导入的 DLL，以及「被修改且未签名的
+`7zG.exe` 必然会被部分杀毒软件误报」的处理办法（加排除项 / 提交误报 / 代码签名）。
 
 ### 安全说明
 

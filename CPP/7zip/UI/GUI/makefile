@@ -125,6 +125,7 @@ FM_OBJS = \
   $O\PasswordDialog.obj \
   $O\PasswordListDialog.obj \
   $O\PasswordVault.obj \
+        $O\PasswordVaultUi.obj \
   $O\ProgressDialog2.obj \
 
 FM_OBJS = $(FM_OBJS) \
