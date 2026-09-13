@@ -4,6 +4,10 @@
 # 发布包
 /*.zip
 
+# VirusTotal API key（本地文件，绝不可入库）
+/.vt-key.txt
+/.vt-key
+
 # 编译产物目录（集成版二进制）
 /7-Zip-密码管家版/
 

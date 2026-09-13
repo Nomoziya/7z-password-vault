@@ -93,7 +93,14 @@ rather than expecting an identical file.
 * Master-password mode uses AES-256-GCM with a key from PBKDF2-HMAC-SHA256
   (200 000 iterations, fresh random salt and fresh 12-byte nonce on **every** save).
 * There is **no network code**: the binaries do not import `ws2_32`, `wininet`,
-  `winhttp` or `urlmon`, and contain no `ShellExecute`.
+  `winhttp` or `urlmon`, and import no socket / DNS / HTTP symbol at all
+  (`WSAStartup`, `socket`, `getaddrinfo`, `InternetOpen*`, `WinHttp*`,
+  `URLDownloadToFile*` — all zero).
+* `7zFM.exe` imports `ShellExecuteW` / `ShellExecuteExW` from `SHELL32`, exactly like
+  the official file manager: that is how **Open** (and the help window) starts the
+  associated program. It is not used to run anything by itself, and `7zG.exe` does
+  not import it. Worth knowing: a VirusTotal sandbox can report a DNS query for a
+  binary that has no networking imports — it cannot have come from the process.
 
 You can check that yourself:
 
@@ -146,10 +153,40 @@ What to do:
 
 * Add the build output and the unpacked package to the antivirus **exclusion list**.
 * If you want the detection reviewed, submit the file to your vendor as a false
-  positive (Kaspersky: <https://opentip.kaspersky.com/> → *Submit to reanalyze*).
+  positive (Kaspersky: <https://opentip.kaspersky.com/> → *Submit to reanalyze*;
+  Microsoft: <https://www.microsoft.com/en-us/wdsi/filesubmission>).
   Include the SHA-256 and the link to this repository.
 * Do **not** disable your antivirus globally, and do not run a build you did not
   compile yourself from a source tree you have reviewed.
+
+### Measured result of v1.4.0 / v1.4.0 实测结果
+
+Both binaries were submitted to VirusTotal (74 engines):
+
+| File | Result |
+|------|--------|
+| `7zFM.exe` | 1/74 — `Microsoft`: `Trojan:Win32/Wacatac.B!ml` |
+| `7zG.exe` | 1/74 — `Microsoft`: `Trojan:Win32/Wacatac.B!ml` |
+| `7z-password-vault-26.03-win64.zip` | **0/73** — nothing flagged |
+
+`!ml` marks a machine-learning verdict, `Wacatac` is its generic name: this is the
+best known false-positive family for unsigned, low-prevalence binaries (a single
+engine, the only one using this model, and no named family from any other vendor).
+The sandbox reports match a plain archiver: no registry writes, no services, no
+persistence, no child process other than itself, and no network traffic — the single
+DNS entry shown for `7zG.exe` cannot come from a binary that imports no socket or
+resolver symbol at all (see section 3).
+
+Submit it to Microsoft as a false positive and the detection normally disappears
+within a day or two for everyone.
+
+To re-read these reports after a rebuild, use `tests\vt-report.ps1`. It needs a free
+VirusTotal API key in `%USERPROFILE%\.vt-key` or in the gitignored `.vt-key.txt`, and
+prints the per-engine verdicts plus the sandbox behaviour of every file:
+
+```powershell
+pwsh -NoProfile -File tests\vt-report.ps1
+```
 
 ---
 
