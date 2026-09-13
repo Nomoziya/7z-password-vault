@@ -165,9 +165,14 @@ Both binaries were submitted to VirusTotal (74 engines):
 
 | File | Result |
 |------|--------|
-| `7zFM.exe` | 1/74 — `Microsoft`: `Trojan:Win32/Wacatac.B!ml` |
-| `7zG.exe` | 1/74 — `Microsoft`: `Trojan:Win32/Wacatac.B!ml` |
-| `7z-password-vault-26.03-win64.zip` | **0/73** — nothing flagged |
+| File | v1.4.0 | v1.4.1 |
+|------|--------|--------|
+| `7zFM.exe` | 1/74 — `Microsoft`: `Trojan:Win32/Wacatac.B!ml` | 1/71 — same |
+| `7zG.exe` | 1/74 — `Microsoft`: `Trojan:Win32/Wacatac.B!ml` | 1/71 — same |
+| `7z-password-vault-26.03-win64.zip` | **0/73** | **0/67** |
+
+(The engine count differs slightly between runs because VirusTotal adds and removes
+engines; the verdicts are identical.)
 
 `!ml` marks a machine-learning verdict, `Wacatac` is its generic name: this is the
 best known false-positive family for unsigned, low-prevalence binaries (a single
@@ -180,14 +185,14 @@ resolver symbol at all (see section 3).
 Submit it to Microsoft as a false positive and the detection normally disappears
 within a day or two for everyone.
 
-To re-read these reports after a rebuild, use `tests\vt-report.ps1`. It needs a free
-VirusTotal API key in `%USERPROFILE%\.vt-key` — a read-only file outside the
-checkout, so the key can never be committed by accident (a stray `.vt-key.txt` in
-the checkout is gitignored as a second safety net). It prints the per-engine
-verdicts plus the sandbox behaviour of every file:
+Two scripts read and refresh these reports. Both need a free VirusTotal API key in
+`%USERPROFILE%\.vt-key` — a read-only file outside the checkout, so the key can never
+be committed by accident (a stray `.vt-key.txt` in the checkout is gitignored as a
+second safety net):
 
 ```powershell
-pwsh -NoProfile -File tests\vt-report.ps1
+pwsh -NoProfile -File tests\vt-report.ps1   # read the reports of the current files
+pwsh -NoProfile -File tests\vt-upload.ps1   # submit them again and read the verdicts
 ```
 
 ---
