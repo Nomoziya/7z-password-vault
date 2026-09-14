@@ -227,6 +227,12 @@ try {
   Head "0. unpack the installer payload (the SFX stub is not started)"
   $privateZip = Join-Path $work "7z.exe"
   Copy-Item -LiteralPath $sevenZip -Destination $privateZip -Force
+  # 7z.exe is not standalone in the official package: it loads 7z.dll from its own folder,
+  # so a private copy needs that DLL next to it (measured: without it "Codec Load Error").
+  foreach ($side in @("7z.dll", "7-zip.dll")) {
+    $src = Join-Path $PackageDir $side
+    if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $work $side) -Force }
+  }
   $sevenZip = $privateZip   # a private copy cannot be locked by another process
   $t0 = Get-Date
   $out = Invoke-Native $sevenZip @("x", "-y", "-bso0", "-bsp0", "-o$extractDir", $Package)
@@ -308,14 +314,14 @@ try {
   if (Test-Path -LiteralPath $installPs1) {
     $t = Get-Content -LiteralPath $installPs1 -Raw
     Check "install.ps1 sets a DisplayName" ($t -match 'DisplayName\s*=') "(no DisplayName)"
-    Check "install.ps1 sets a DisplayVersion of the form x.y.z" ($t -match 'DisplayVersion\s*=\s*"\d+\.\d+\.\d+"') "(no DisplayVersion)"
+    Check "install.ps1 sets a DisplayVersion" ($t -match 'DisplayVersion\s*=\s*"\d+\.\d+(?:\.\d+)?"') "(no DisplayVersion)"
     Check "install.ps1 sets both UninstallString and QuietUninstallString" `
       (($t -match 'UninstallString') -and ($t -match 'QuietUninstallString'))
     Check "install.ps1 registers per user only (HKCU)" (($t -match 'HKCU:') -and ($t -notmatch 'HKLM:')) "(HKCU/HKLM mismatch)"
     Check "install.ps1 registers under the key the uninstaller looks at" `
       ($t -match 'Uninstall\\7ZipPasswordVault') "(key name differs from tools\uninstall.ps1)"
     if (Test-Path -LiteralPath $uninstPs1) {
-      $vInstall = [regex]::Match($t, 'DisplayVersion\s*=\s*"(\d+\.\d+\.\d+)"').Groups[1].Value
+      $vInstall = [regex]::Match($t, 'DisplayVersion\s*=\s*"(\d+\.\d+(?:\.\d+)?)"').Groups[1].Value
       $tU = Get-Content -LiteralPath $uninstPs1 -Raw
       Check "the version in install.ps1 looks like a real version ([$vInstall])" (-not [string]::IsNullOrWhiteSpace($vInstall))
       Check "the uninstaller uses the same uninstall key as install.ps1" ($tU -match 'Uninstall\\7ZipPasswordVault')
@@ -335,6 +341,10 @@ try {
     $script:bagRegRoot = Get-KeyBag $regRoot
     $script:bagUninstall = Get-KeyBag $uninstallKey
     $script:hadRoamingVault = Test-Path -LiteralPath $roamingVault
+    # a copy of the user's own vault, so an accident can be undone instead of only reported
+    if ($script:hadRoamingVault) {
+      Copy-Item -LiteralPath $roamingVault -Destination (Join-Path $work "user-vault-backup.dat") -Force
+    }
     $script:rescueBefore = @(Get-ChildItem -LiteralPath $roamingDir -Filter "7zPasswordVault-rescued-*.dat" -ErrorAction SilentlyContinue |
                              Select-Object -ExpandProperty FullName)
     $script:preLinks = @($startMenuLink, $desktopLink) | Where-Object { Test-Path -LiteralPath $_ }
@@ -353,7 +363,7 @@ try {
     Remove-Item -LiteralPath $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
     Check "the Apps & features entry does not exist before the install" (-not (Test-Path -LiteralPath $uninstallKey))
 
-    $installArgs = if ($IncludeShortcuts) { @("-InstallDir", $installDir) } else { @("-NoShortcuts", "-InstallDir", $installDir) }
+    $installArgs = @("-NoShortcuts")   # install.cmd already passes -InstallDir (%~dp0.)
     if (-not $IncludeShortcuts) {
       Skip-Phase "shortcut creation" "pass -IncludeShortcuts (it writes into the real Start Menu / Desktop for a moment)"
     } else {
@@ -369,7 +379,7 @@ try {
       $props = Get-ItemProperty -LiteralPath $uninstallKey
       Check "DisplayName names the product and the version" `
         ($props.DisplayName -match '7-Zip Password Vault' -and $props.DisplayName -match '\d\d\.\d\d') "(got [$($props.DisplayName)])"
-      Check "DisplayVersion is a version number" ($props.DisplayVersion -match '^\d+\.\d+\.\d+$') "(got [$($props.DisplayVersion)])"
+      Check "DisplayVersion is a version number" ($props.DisplayVersion -match '^\d+\.\d+(?:\.\d+)?$') "(got [$($props.DisplayVersion)])"
       Check "Publisher is set" (-not [string]::IsNullOrWhiteSpace($props.Publisher)) "(got [$($props.Publisher)])"
       Check "DisplayIcon points at 7zFM.exe of this folder" ($props.DisplayIcon -like "*$installDir*7zFM.exe*") "(got [$($props.DisplayIcon)])"
       Check "InstallLocation points into this test's folder (not at a real installation)" `
@@ -395,11 +405,24 @@ try {
 
     # ================================================================ phase 3: uninstall
     Head "3. uninstall from the isolated folder"
+    # The uninstaller resolves the vault from the settings; with no location recorded that is
+    # the DEFAULT location, i.e. the user's own vault in %APPDATA%\7-Zip. A test must never
+    # delete that, so a vault inside this test's folder is pointed at first - the deletion
+    # path is still exercised, on a file this test owns.
+    $testVault = Join-Path $work "acceptance-vault.dat"
+    Set-Content -LiteralPath $testVault -Value "not a real vault" -Encoding ASCII
+    $vaultKey = Join-Path $regRoot "PasswordVault"
+    New-Item -Path $vaultKey -Force | Out-Null
+    Set-ItemProperty -Path $vaultKey -Name "VaultPath" -Value $testVault -Type String
+    Check "the uninstaller is pointed at a vault this test owns" `
+      ((Get-ItemProperty -Path $vaultKey -Name VaultPath -ErrorAction SilentlyContinue).VaultPath -eq $testVault)
+
     # -Lcid1033: the checks below read the output, and the uninstaller falls back to the
     # system language without it. The uninstaller passes the arguments through to
     # powershell.exe, so the switch is honoured there.
     $r = Invoke-Capture "cmd.exe" @("/c", "`"$installDir\uninstall.cmd`" -DeleteVault -Yes -NoBackup -Lcid1033") $installDir $nul
     Check "uninstall.cmd runs and reports success" ($r.Code -eq 0) "(exit $($r.Code): $($r.Out.Trim()))"
+    Check "the vault this test pointed at was deleted" (-not (Test-Path -LiteralPath $testVault))
     Check "the Apps & features entry is gone" (-not (Test-Path -LiteralPath $uninstallKey))
 
     $gone = Wait-Gone $installDir $WriteWaitSeconds
@@ -429,6 +452,13 @@ try {
 
     # ================================================================ phase 4: fallback
     Head "4. the same uninstaller without a hash list, and in a folder shared with another 7-Zip"
+    # The uninstallers below ask for the vault to be deleted again, and the settings key was
+    # removed by the run above: without a recorded location they would fall back to the DEFAULT
+    # location, which is the user's own vault. Point them at a file this test owns.
+    $testVault4 = Join-Path $work "acceptance-vault-4.dat"
+    Set-Content -LiteralPath $testVault4 -Value "not a real vault" -Encoding ASCII
+    New-Item -Path $vaultKey -Force | Out-Null
+    Set-ItemProperty -Path $vaultKey -Name "VaultPath" -Value $testVault4 -Type String
     # 4a: no SHA256SUMS.txt at all -> the by-name fallback, which has to announce itself
     $dirA = Join-Path $work "fallback"
     New-Item -ItemType Directory -Force -Path $dirA | Out-Null
@@ -496,7 +526,16 @@ try {
       }
     }
   }
-  # a test run must never leave a test vault in the user's own folder
+  # A test run must never leave a test vault in the user's own folder - and if the user's own
+  # vault was deleted by accident, put the copy back instead of only reporting the loss.
+  if ($IncludeRegistry) {
+    $vaultBackup = Join-Path $work "user-vault-backup.dat"
+    if ((Test-Path -LiteralPath $vaultBackup) -and -not (Test-Path -LiteralPath $roamingVault)) {
+      New-Item -ItemType Directory -Force -Path $roamingDir | Out-Null
+      Copy-Item -LiteralPath $vaultBackup -Destination $roamingVault -Force
+      Write-Host ("  the user's vault was put back from the backup: {0}" -f $roamingVault) -ForegroundColor Yellow
+    }
+  }
   foreach ($f in @(Get-ChildItem -LiteralPath $roamingDir -Filter "7zPasswordVault-rescued-*.dat" -ErrorAction SilentlyContinue)) {
     if ($script:rescueBefore -notcontains $f.FullName) {
       Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue

@@ -6,6 +6,10 @@ rem   uninstall.cmd -KeepVault
 rem   uninstall.cmd -AllUsers
 rem   uninstall.cmd -WhatIf
 setlocal
+rem Windows cannot remove a directory that is a process's current directory, and a
+rem double-click starts this script with the program folder as the current directory.
+rem Leaving it here is what lets the uninstaller delete the folder itself.
+cd /d "%TEMP%" 2>nul
 set "PS=powershell.exe"
 where pwsh.exe >nul 2>nul && set "PS=pwsh.exe"
 "%PS%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0uninstall.ps1" %*

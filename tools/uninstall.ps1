@@ -365,6 +365,11 @@ if ($VaultAction -eq "Keep") {
 
 # ---------------------------------------------------------------- the folder
 Say ""
+# Windows refuses to remove a directory that is a process's current directory, and a user
+# who double-clicks uninstall.cmd inside the program folder makes that folder the current
+# directory of this script and of the shell that started it. Move out of the way first so the
+# folder can really be deleted; the helper below is started with its own working directory.
+try { Set-Location -LiteralPath $env:TEMP -ErrorAction Stop } catch { }
 Say "Program folder..."
 if ($WhatIf) {
   Say "  [would remove] these files in $installDirFull (everything else stays):"
@@ -409,6 +414,15 @@ if ($WhatIf) {
       Keep "the program folder (a foreign hash list was found): $installDirFull"
     }
   }
+  # uninstall.cmd is the script that started this one (or the user double-clicked it), and
+  # cmd.exe reads a batch file while it executes it: deleting it here makes cmd report
+  # "The batch file cannot be found." and exit 1 although everything was removed. It is
+  # therefore always left to the delayed helper, in both deletion branches.
+  $handedToHelper = @()
+  if (Test-Path -LiteralPath (Join-Path $installDirFull "uninstall.cmd")) {
+    $handedToHelper += "uninstall.cmd"
+  }
+
   if ($manifestUsed -and $manifestIsOurs) {
     # The hash list decides what belongs to this package: a file of the same name that
     # does not match is somebody else's (an official 7-Zip in the same folder, or a file
@@ -477,6 +491,7 @@ if ($WhatIf) {
     Say "  [warn]    no SHA256SUMS.txt: falling back to deleting by name. A file of the" -ForegroundColor Yellow
     Say "            same name that belongs to another 7-Zip in this folder would be removed." -ForegroundColor Yellow
     foreach ($name in $ourFiles) {
+      if ($handedToHelper -contains $name) { continue }   # the helper deletes uninstall.cmd
       $f = Join-Path $installDirFull $name
       if (Test-Path -LiteralPath $f) {
         Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
@@ -491,26 +506,28 @@ if ($WhatIf) {
   } else {
     Say "  [skipped] the hash list is not this package's, so no program file was deleted"
   }
-  # uninstall.cmd is running the script that is doing this, and cmd.exe reads a batch file
-  # while it executes it, so that one file is left to the helper below.
-  $handedToHelper = @()
-  if ($manifestUsed -and $manifestHasCmd -and (Test-Path -LiteralPath (Join-Path $installDirFull "uninstall.cmd"))) {
-    $handedToHelper += "uninstall.cmd"
-  }
+  # uninstall.cmd was already put aside for the helper above; the rest of the accounting is
+  # done here.
   $leftFiles = @(Get-ChildItem -LiteralPath $installDirFull -File -Force -ErrorAction SilentlyContinue |
                  Where-Object { $_.Name -ne (Split-Path $self -Leaf) -and $handedToHelper -notcontains $_.Name })
   $leftDirs = @(Get-ChildItem -LiteralPath $installDirFull -Directory -Force -ErrorAction SilentlyContinue)
   Remove-Item -LiteralPath $self -Force -ErrorAction SilentlyContinue
   if ($leftFiles.Count -eq 0 -and $leftDirs.Count -eq 0) {
-    # nothing of ours and nothing foreign left: remove the (empty) folder itself, which
-    # the running script may still hold for a moment, so a helper does it. The batch
-    # launcher goes with it, after cmd.exe has had time to finish reading it.
+    # Nothing of ours and nothing foreign left: remove the (empty) folder itself, which the
+    # running script may still hold for a moment, so a helper does it. The batch launcher goes
+    # with it, after cmd.exe has had time to finish reading it.
+    #
+    # The helper must NOT inherit this folder as its working directory: Windows refuses to
+    # remove a directory that is some process's current directory, and a user who double-clicks
+    # uninstall.cmd right inside the program folder is exactly that case - the folder used to
+    # survive as an empty leftover. Both the helper and this script therefore move their own
+    # working directory out of the way first.
     $helper = @("/c", "timeout", "/t", "3", ">nul", "&")
     foreach ($name in $handedToHelper) {
       $helper += @("del", "/q", "`"$(Join-Path $installDirFull $name)`"", ">nul", "2>nul", "&")
     }
     $helper += @("rmdir", "/q", "`"$installDirFull`"")
-    Start-Process -FilePath "cmd.exe" -ArgumentList $helper -WindowStyle Hidden
+    Start-Process -FilePath "cmd.exe" -ArgumentList $helper -WindowStyle Hidden -WorkingDirectory $env:TEMP
     Ok "program folder (emptied; a helper removes the folder itself)"
   } else {
     Say ""
@@ -548,3 +565,9 @@ if (-not $WhatIf -and -not $NoBackup -and (Test-Path -LiteralPath $BackupPath)) 
 if ($WhatIf) { Say "  this was a -WhatIf run: nothing was changed" }
 Say ""
 if (-not $WhatIf -and -not $Yes) { [void](Read-Host "Press Enter to close") }
+
+# An explicit success code: without it the exit code of this script is whatever the last child
+# process or failed cmdlet left behind, and uninstall.cmd turns that into "the uninstaller
+# reported a problem" even when everything was removed (measured: the no-hash-list fallback
+# exited 1 while its folder was gone).
+exit 0
