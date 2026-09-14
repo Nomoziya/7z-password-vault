@@ -392,7 +392,24 @@ if ($WhatIf) {
   $manifestPath = Join-Path $installDirFull "SHA256SUMS.txt"
   $manifestUsed = Test-Path -LiteralPath $manifestPath
   $manifestHasCmd = $false
+  $manifestIsOurs = $false
   if ($manifestUsed) {
+    # A hash list is only used as the deletion plan when it really is this package's list.
+    # A file with that name from elsewhere (a download page, another tool) lists other
+    # files, and deleting by its hashes would remove things that are not ours. The first
+    # line is the package header, so it identifies the list.
+    $firstLine = ""
+    try { $firstLine = [string](Get-Content -LiteralPath $manifestPath -TotalCount 1 -ErrorAction Stop) } catch { $firstLine = "" }
+    $manifestIsOurs = ($firstLine -match '7-Zip Password Vault')
+    if (-not $manifestIsOurs) {
+      Say ""
+      Say "  [warn]    the SHA256SUMS.txt in this folder is not this package's list:" -ForegroundColor Yellow
+      Say "            $firstLine"
+      Say "            nothing is deleted by it, and nothing is deleted by name either." -ForegroundColor Yellow
+      Keep "the program folder (a foreign hash list was found): $installDirFull"
+    }
+  }
+  if ($manifestUsed -and $manifestIsOurs) {
     # The hash list decides what belongs to this package: a file of the same name that
     # does not match is somebody else's (an official 7-Zip in the same folder, or a file
     # the user put there) and is left alone.
@@ -456,7 +473,7 @@ if ($WhatIf) {
         Remove-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue
       }
     }
-  } else {
+  } elseif (-not $manifestUsed) {
     Say "  [warn]    no SHA256SUMS.txt: falling back to deleting by name. A file of the" -ForegroundColor Yellow
     Say "            same name that belongs to another 7-Zip in this folder would be removed." -ForegroundColor Yellow
     foreach ($name in $ourFiles) {
@@ -471,6 +488,8 @@ if ($WhatIf) {
       if (Test-Path -LiteralPath $dd) { Remove-Item -LiteralPath $dd -Recurse -Force -ErrorAction SilentlyContinue }
     }
     Ok ("program files removed ({0} files, by name)" -f $removedFiles)
+  } else {
+    Say "  [skipped] the hash list is not this package's, so no program file was deleted"
   }
   # uninstall.cmd is running the script that is doing this, and cmd.exe reads a batch file
   # while it executes it, so that one file is left to the helper below.

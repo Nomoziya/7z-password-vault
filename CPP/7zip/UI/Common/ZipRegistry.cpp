@@ -628,6 +628,14 @@ void CInfo::Save() const
   key.SetValue(kShowPasswordForUnnamed, ShowPasswordForUnnamed);
 }
 
+void CInfo::SaveVaultPath(const FString &path)
+{
+  CS_LOCK
+  CKey key;
+  CreateMainKey(key, kKeyName);
+  key.SetValue(kVaultPath, fs2us(path));
+}
+
 void CInfo::Load()
 {
   VaultPath.Empty();

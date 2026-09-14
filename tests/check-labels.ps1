@@ -181,9 +181,25 @@ Set-ItemProperty -Path $langKey -Name "Lang" -Value $UiLang -Type String
 # the program. That is the program's documented behaviour, but a measuring tool must not
 # touch the user's vault. The path points into %TEMP% and is restored afterwards.
 $vaultKey = Join-Path $langKey "PasswordVault"
-$savedVaultPath = (Get-ItemProperty -Path $vaultKey -Name VaultPath -ErrorAction SilentlyContinue).VaultPath
-New-Item -Path $vaultKey -Force | Out-Null
-Set-ItemProperty -Path $vaultKey -Name VaultPath -Value (Join-Path $work "measure-vault.dat") -Type String
+$savedVaultPath = $null
+$haveVaultPath = $false
+$savedSetupAsked = $null
+if (Test-Path -LiteralPath $vaultKey) {
+  $existing = (Get-ItemProperty -Path $vaultKey -Name VaultPath -ErrorAction SilentlyContinue).VaultPath
+  if ($null -ne $existing) { $savedVaultPath = $existing; $haveVaultPath = $true }
+  $savedSetupAsked = (Get-ItemProperty -Path $vaultKey -Name SetupAsked -ErrorAction SilentlyContinue).SetupAsked
+}
+try {
+  New-Item -Path $vaultKey -Force | Out-Null
+  Set-ItemProperty -Path $vaultKey -Name VaultPath -Value (Join-Path $work "measure-vault.dat") -Type String
+  # the first-start question ("create shortcuts?") would sit in front of every dialog this
+  # tool measures, so it is answered up front as well
+  Set-ItemProperty -Path $vaultKey -Name SetupAsked -Value 1 -Type DWord
+} catch {
+  Write-Host ("  setting a temporary vault location failed: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+  Write-Host "  (the program may move the real vault - close other 7-Zip windows first)" -ForegroundColor Yellow
+  exit 3
+}
 try {
 
 $script:clipped = 0
@@ -270,8 +286,12 @@ Get-Process 7zFM -ErrorAction SilentlyContinue | Stop-Process -Force
   Get-Process 7zFM,7zG -ErrorAction SilentlyContinue | Stop-Process -Force
   if ($savedLang) { Set-ItemProperty -Path $langKey -Name "Lang" -Value $savedLang -Type String }
   else { Remove-ItemProperty -Path $langKey -Name "Lang" -ErrorAction SilentlyContinue }
-  if ($savedVaultPath) { Set-ItemProperty -Path $vaultKey -Name VaultPath -Value $savedVaultPath -Type String }
+  if ($haveVaultPath) { Set-ItemProperty -Path $vaultKey -Name VaultPath -Value $savedVaultPath -Type String }
   else { Remove-ItemProperty -Path $vaultKey -Name VaultPath -ErrorAction SilentlyContinue }
+  # the shortcut question must be left unanswered again for the user, or their first start
+  # would silently skip it
+  if ($savedSetupAsked) { Set-ItemProperty -Path $vaultKey -Name SetupAsked -Value $savedSetupAsked -Type DWord }
+  else { Remove-ItemProperty -Path $vaultKey -Name SetupAsked -ErrorAction SilentlyContinue }
   Remove-Item -Force (Join-Path $work "measure-vault.dat") -ErrorAction SilentlyContinue
 }
 

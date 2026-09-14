@@ -57,7 +57,7 @@ Get-ChildItem -LiteralPath $InstallDir -Recurse -File -ErrorAction SilentlyConti
 New-Item -Path $uninstallKey -Force | Out-Null
 $info = @{
   DisplayName     = "$appName 26.03"
-  DisplayVersion  = "1.4.3"
+  DisplayVersion  = "26.03"
   Publisher       = "Nomoziya"
   DisplayIcon     = $fm
   InstallLocation = $InstallDir
@@ -73,6 +73,12 @@ foreach ($k in $info.Keys) {
   $type = if ($info[$k] -is [int]) { "DWord" } else { "String" }
   Set-ItemProperty -Path $uninstallKey -Name $k -Value $info[$k] -Type $type
 }
+
+# The program asks on its first start whether it should create the shortcuts itself. This
+# script has just done that, so the question is recorded as answered - otherwise a user who
+# ran install.cmd would be asked about shortcuts that already exist.
+New-Item -Path "HKCU:\Software\7-Zip\PasswordVault" -Force | Out-Null
+Set-ItemProperty -Path "HKCU:\Software\7-Zip\PasswordVault" -Name "SetupAsked" -Value 1 -Type DWord
 
 # ---------------------------------------------------------------- summary
 Say ""

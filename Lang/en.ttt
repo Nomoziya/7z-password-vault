@@ -469,6 +469,12 @@ Two vault files were found:\n\nNext to the program: {0}\n\nUser folder: {1}\n\nW
 This vault will be used from now on:\n\n{0}\n\nThe other vault file was not touched and is still at:\n\n{1}
 3867
 This vault will be used from now on:\n\n{0}\n\nThe other vault file was not touched and is still at:\n\n{1}
+3868
+Create shortcuts on the Start Menu and the desktop, and register an uninstall entry in "Apps & features"?\n\nOnly the current user is written to, no administrator rights are needed, and "No" keeps everything working.
+3869
+Shortcuts were created (Start Menu, desktop) and an uninstall entry was registered in "Apps & features".\n\n{0}
+3870
+Some shortcuts or the registry entry could not be created (a system policy may block them).\n\nThe program itself is unaffected - just run 7zFM.exe in this folder:\n{0}
 3900
 Elapsed time:
 Remaining time:

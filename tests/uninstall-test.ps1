@@ -58,7 +58,9 @@ function New-FakeInstall([string]$dir) {
 # tests\deploy.ps1. $skip lists relative paths that must stay out of the list.
 function Write-HashList([string]$dir, [string[]]$skip = @(), [string[]]$extra = @()) {
   $lines = New-Object System.Collections.Generic.List[string]
-  $lines.Add("# fake package hash list (test)")
+  # The header has to look like the real package's: the uninstaller only trusts a hash list
+  # that identifies itself as this package's, so a foreign list cannot drive the deletion.
+  $lines.Add("# 7-Zip Password Vault 26.03 - SHA-256 of every file in this package (test)")
   $lines.AddRange($extra)
   Get-ChildItem -LiteralPath $dir -Recurse -File | Where-Object {
     $_.Name -ne "SHA256SUMS.txt" -and $skip -notcontains $_.FullName.Substring($dir.Length + 1)

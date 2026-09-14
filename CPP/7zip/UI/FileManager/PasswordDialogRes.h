@@ -110,3 +110,9 @@
    one stays */
 #define IDT_PASSWORD_USING_PORTABLE     3866
 #define IDT_PASSWORD_USING_ROAMING      3867
+
+/* first start: offer to create the shortcuts and the "Apps & features" entry (the
+   self-extracting package cannot run a script after unpacking, so the program does it) */
+#define IDT_PASSWORD_FIRST_RUN_Q        3868
+#define IDT_PASSWORD_FIRST_RUN_OK       3869
+#define IDT_PASSWORD_FIRST_RUN_FAILED   3870

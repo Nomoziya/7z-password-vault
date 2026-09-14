@@ -56,8 +56,8 @@ Two builds are published for every release:
 
 | Build | What it is |
 |-------|------------|
-| `7z-password-vault-<version>-win64-setup.exe` | **Installer.** Asks for a folder (default `D:\7-Zip Password Vault\`), unpacks there, creates Start Menu / Desktop shortcuts and registers itself in *Apps & features* (per user, no administrator needed). Uninstall from there, or run `uninstall.cmd` in the program folder. |
-| `7z-password-vault-<version>-win64-portable.zip` | **Portable.** Unpack anywhere and run `7zFM.exe`. Nothing is written outside that folder except 7-Zip's own per-user settings in `HKCU\Software\7-Zip`. |
+| `7z-password-vault-<version>-win64-setup.exe` | **Self-extracting package** (not an installer in the technical sense: the 7-Zip SFX stub cannot run a program after unpacking — that was measured, so nothing pretends otherwise). It asks for a folder, unpacks the package there and exits. On the **first start** the program itself asks whether it should create the Start Menu / desktop shortcuts and register an entry in *Apps & features* — current user only, no administrator rights, and "No" leaves everything working. The same can be done later by running `install.cmd` in the program folder; uninstall with `uninstall.cmd` or from *Apps & features*. |
+| `7z-password-vault-<version>-win64-portable.zip` | **Portable.** Unpack anywhere and run `7zFM.exe`. Nothing is written outside that folder except 7-Zip's own per-user settings in `HKCU\Software\7-Zip`. The shortcut question is offered here as well and can simply be answered with "No". |
 
 After installing, associations and file icons are one step away: **Tools → Options →
 System**, tick `7z`, `zip`, … and press OK. A portable copy is not associated with
@@ -243,8 +243,8 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 
 | 包 | 说明 |
 |----|------|
-| `7z-password-vault-<版本>-win64-setup.exe` | **安装版**：先选择安装目录（默认 `D:\7-Zip Password Vault\`），解包后创建开始菜单 / 桌面快捷方式，并把自己登记到「应用和功能」（当前用户，无需管理员）。卸载从那里点，或运行程序目录里的 `uninstall.cmd`。 |
-| `7z-password-vault-<版本>-win64-portable.zip` | **便携版**：解压到任意位置直接运行 `7zFM.exe`。除了 7-Zip 自己的每用户设置（`HKCU\Software\7-Zip`）之外，不往目录外写任何东西。 |
+| `7z-password-vault-<版本>-win64-setup.exe` | **自解压包**（严格说不是安装器：7-Zip 的 SFX 存根**不能**在解包后执行程序，这是实测结论，所以这里不做任何假装）。它只做两件事：问你解包到哪个文件夹、解包完退出。快捷方式与「应用和功能」登记由**程序自己**在**首次启动**时询问后完成 —— 只写当前用户、不需要管理员权限，选「否」也照常使用。想立刻做也可以之后手动运行程序目录里的 `install.cmd`；卸载用 `uninstall.cmd` 或从「应用和功能」里点。 |
+| `7z-password-vault-<版本>-win64-portable.zip` | **便携版**：解压到任意位置直接运行 `7zFM.exe`。除了 7-Zip 自己的每用户设置（`HKCU\Software\7-Zip`）之外，不往目录外写任何东西。首次启动同样会问一次是否创建快捷方式，选「否」即可。 |
 
 安装完成后，关联与文件图标只差一步：**工具 → 选项 → 系统**，勾选 `7z`、`zip` 等，
 确定即可。便携版默认不会关联任何格式 —— 以前那是官方安装程序做的事。

@@ -37,8 +37,28 @@ $files += @(
   (Join-Path $root "7-Zip-密码管家版\7zG.exe")
 ) | Where-Object { Test-Path $_ }
 
+# A transient 502/503 from the API must not throw away a completed submission, so every call
+# is retried a few times with a pause.
+function Invoke-Vt {
+  param([string]$Uri, [string]$Method = "Get", [hashtable]$Form = $null, [int]$Timeout = 60, [int]$TryCount = 4)
+  $last = $null
+  for ($i = 1; $i -le $TryCount; $i++) {
+    try {
+      if ($Method -eq "Post") {
+        return Invoke-RestMethod -Method Post -Uri $Uri -Headers $headers -Form $Form -TimeoutSec $Timeout
+      }
+      return Invoke-RestMethod -Uri $Uri -Headers $headers -TimeoutSec $Timeout
+    } catch {
+      $last = $_
+      Write-Host ("  request failed (try {0}/{1}): {2}" -f $i, $TryCount, $_.Exception.Message) -ForegroundColor DarkYellow
+      Start-Sleep -Seconds (10 * $i)
+    }
+  }
+  throw $last
+}
+
 function Show-Report([string]$hash) {
-  $r = Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/files/$hash" -Headers $headers -TimeoutSec 60
+  $r = Invoke-Vt -Uri "https://www.virustotal.com/api/v3/files/$hash"
   $a = $r.data.attributes
   $s = $a.last_analysis_stats
   Write-Host ("  name   : {0}   size: {1} bytes" -f $a.meaningful_name, $a.size)
@@ -69,14 +89,14 @@ foreach ($f in $files) {
   if (-not $SkipUpload) {
     # The first submission of a file returns an analysis id; the verdict appears a
     # few seconds later, so it is polled until it is completed.
-    $up = Invoke-RestMethod -Method Post -Uri "https://www.virustotal.com/api/v3/files" -Headers $headers `
-      -Form @{ file = Get-Item -LiteralPath $f } -TimeoutSec 300
+    $up = Invoke-Vt -Uri "https://www.virustotal.com/api/v3/files" -Method Post `
+      -Form @{ file = Get-Item -LiteralPath $f } -Timeout 300
     $analysis = $up.data.id
     Write-Host "  submitted (analysis $analysis)"
     $deadline = (Get-Date).AddSeconds(240)
     while ((Get-Date) -lt $deadline) {
       Start-Sleep -Seconds $PauseSeconds
-      $st = (Invoke-RestMethod -Uri "https://www.virustotal.com/api/v3/analyses/$analysis" -Headers $headers -TimeoutSec 60).data.attributes.status
+      $st = (Invoke-Vt -Uri "https://www.virustotal.com/api/v3/analyses/$analysis").data.attributes.status
       if ($st -eq "completed") { break }
       Write-Host "  analysis: $st"
     }

@@ -85,7 +85,16 @@ endif
 endif
 endif
 
-LDFLAGS_STATIC = $(CFLAGS_DEBUG) $(LDFLAGS_STATIC_2) $(LDFLAGS_STATIC_3)
+LFLAGS_STATIC = $(CFLAGS_DEBUG) $(LDFLAGS_STATIC_2) $(LDFLAGS_STATIC_3)
+
+# GNU ld writes the link time into the PE header (TimeDateStamp), which makes two builds of
+# the same source differ byte for byte: measured, the object files and the resources are
+# already deterministic and this timestamp is the only remaining source. A binary that
+# rebuilds identically is what lets one false-positive submission (Microsoft judges by file
+# hash) cover more than one release, so the stamp is zeroed on the PE targets.
+ifdef IS_MINGW
+LFLAGS_REPRO ?= -Wl,--no-insert-timestamp
+endif
 
 ifndef O
   ifdef IS_MINGW
@@ -251,7 +260,12 @@ endif
 endif
 
 
-LFLAGS_ALL = $(LFLAGS_STRIP) $(MY_ARCH_2) $(LDFLAGS) $(FLAGS_FLTO) $(LD_arch) $(LFLAGS_NOEXECSTACK) $(OBJS) $(MY_LIBS) $(LIB2)
+# GNU ld writes the link time into the PE header (TimeDateStamp), which makes two builds of
+# the same source differ byte for byte - measured: object files and resources are already
+# deterministic, the timestamp is the only source. A reproducible binary is what lets one
+# false-positive submission (Microsoft judges by file hash) cover many releases, so the
+# stamp is zeroed when the linker supports it.
+LFLAGS_ALL = $(LFLAGS_STRIP) $(MY_ARCH_2) $(LDFLAGS) $(FLAGS_FLTO) $(LD_arch) $(LFLAGS_NOEXECSTACK) $(OBJS) $(MY_LIBS) $(LIB2) $(LFLAGS_REPRO)
 
 # -s : GCC : Remove all symbol table and relocation information from the executable.
 # -s : CLANG : unsupported
@@ -1110,6 +1124,8 @@ $O/PasswordPage.o: ../../UI/FileManager/PasswordPage.cpp
 $O/PasswordListDialog.o: ../../UI/FileManager/PasswordListDialog.cpp
 	$(CXX) $(CXXFLAGS) $<
 $O/PasswordVaultUi.o: ../../UI/FileManager/PasswordVaultUi.cpp
+	$(CXX) $(CXXFLAGS) $<
+$O/SetupShortcuts.o: ../../UI/FileManager/SetupShortcuts.cpp
 	$(CXX) $(CXXFLAGS) $<
 $O/ProgramLocation.o: ../../UI/FileManager/ProgramLocation.cpp
 	$(CXX) $(CXXFLAGS) $<

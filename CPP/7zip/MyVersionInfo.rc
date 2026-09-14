@@ -1,2 +1,15 @@
 #include "MyVersion.h"
+
+/* This is a modified build of 7-Zip, and the version resource has to say so.
+   Reason: the two rebuilt executables carry no Authenticode signature, and an unsigned
+   binary whose version resource claims the official company, product and copyright is the
+   exact shape of an impersonation - which is what the machine-learning detections
+   (`Trojan:Win32/Wacatac.*!ml`) on 7zFM.exe/7zG.exe react to. The upstream origin and the
+   licence stay visible in the copyright text.
+   Only the components that are actually rebuilt here are affected; the official
+   7z.exe/7z.dll that ship unchanged keep their own resource. */
+#define MY_VERSION_INFO_COMPANY    "Nomoziya"
+#define MY_VERSION_INFO_PRODUCT    "7-Zip Password Vault"
+#define MY_VERSION_INFO_COPYRIGHT  "Based on 7-Zip 26.03, Copyright (c) 1999-2026 Igor Pavlov (LGPL); modifications Copyright (c) 2026 Nomoziya"
+
 #include "../../C/7zVersion.rc"

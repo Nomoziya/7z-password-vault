@@ -203,6 +203,11 @@ namespace NPasswordVault
 
     void Save() const;
     void Load();
+
+    /* Writes only the vault location. Save() writes all nine values, so using it to record
+       one decision would silently roll back whatever another process (7zFM and 7zG share
+       this key) changed while the user was answering a dialog. */
+    static void SaveVaultPath(const FString &path);
   };
 }
 

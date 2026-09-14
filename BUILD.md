@@ -160,6 +160,32 @@ What to do:
 * Do **not** disable your antivirus globally, and do not run a build you did not
   compile yourself from a source tree you have reviewed.
 
+### Reproducible builds and the version resource / 可复现构建与版本资源
+
+Two builds of the same source used to differ byte for byte. Measured cause: **GNU ld writes
+the link time into the PE header** (`TimeDateStamp`); the object files and the compiled
+resources are already deterministic, and the timestamp is the only remaining source. The
+link rules now pass `-Wl,--no-insert-timestamp` on Windows targets (`7zip_gcc.mak`), so
+re-linking twice produces **identical hashes** — verified. That matters because Microsoft
+judges a false-positive report by file hash: a binary that rebuilds identically does not
+need a new submission for every repackaging.
+
+`make` does **not** track the `.rc` files: after editing a resource or a manifest, delete
+`b/g/resource.o` in the component you are building, otherwise the old icons, the old version
+resource and the old manifest are linked again. (This is easy to miss: everything links fine
+and only the version info is stale.)
+
+The version resource of the rebuilt binaries no longer claims to be Igor Pavlov's 7-Zip:
+`CPP/7zip/MyVersionInfo.rc` overrides `CompanyName` / `ProductName` / `LegalCopyright` for
+the components built here (`C/7zVersion.rc` keeps upstream defaults for everything else).
+An unsigned binary that claims the official company and product is the shape of an
+impersonation, and that is what the machine-learning detections react to. The upstream origin
+and the licence stay in the copyright text, and `7z.exe` / `7z.dll` — which ship unchanged
+from the official package — keep their own resource. The manifests now also declare
+`<requestedExecutionLevel level="asInvoker"/>`: the program never needs administrator rights.
+
+关于报毒减少的实测数据（归属实验：哪一层引起检测）见 `docs/vt-attribution.md`。
+
 ### Measured result of v1.4.0 / v1.4.0 实测结果
 
 Both binaries were submitted to VirusTotal (74 engines):

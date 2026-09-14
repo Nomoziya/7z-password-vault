@@ -1,10 +1,15 @@
 ;!@Install@!UTF-8!
 Title="7-Zip Password Vault 26.03"
-BeginPrompt="Install 7-Zip Password Vault 26.03?"
 Progress="yes"
-; A trailing backslash makes the module ask for the folder (default on D:, so the
-; vault next to the program does not use the system drive). Without the backslash it
-; would extract silently to the given path.
-InstallPath="D:\7-Zip Password Vault\"
-RunProgram="install.cmd"
+; The stub used here is the plain 7-Zip self-extractor (7z.sfx). It does **not** read
+; RunProgram or InstallPath, and it never runs anything after unpacking. That was measured,
+; not assumed: a probe built from this stub with RunProgram="marker.cmd" unpacked its files
+; and never created the marker. The two keys were therefore removed instead of pretending
+; they work (they belong to 7zSD.sfx from the LZMA SDK, a different module).
+;
+; So this file is an archive, not an installer: it asks for a folder, unpacks the package
+; into it and exits. The shortcuts and the "Apps & features" entry are created by the
+; program itself on its first start, after asking - current user only, no admin rights, and
+; it can be answered with "no" without losing anything. install.cmd stays in the folder as
+; a manual entry point for people who want the shortcuts right away.
 ;!@InstallEnd@!

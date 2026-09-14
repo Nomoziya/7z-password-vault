@@ -1,7 +1,17 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
   <assemblyIdentity version="1.0.0.0" processorArchitecture="*" name="7-Zip.7-Zip.7zFM" type="win32"/>
-  <description>7-Zip File Manager.</description>
+  <description>7-Zip Password Vault File Manager (modified 7-Zip build).</description>
+  <!-- The program never needs administrator rights: the vault, its settings and its
+       "Apps & features" entry all live in the current user's profile. Saying so explicitly
+       is also what a normal desktop application looks like to a static scan. -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
   <dependency>
     <dependentAssembly><assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/></dependentAssembly>
   </dependency>

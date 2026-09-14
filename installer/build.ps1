@@ -6,8 +6,15 @@
 #
 # The installer is a 7-Zip SFX: the stub (7z.sfx, which ships with 7-Zip), the config
 # from installer\sfx-config.txt and the payload are concatenated into one .exe. It asks
-# for a folder, unpacks there, runs installer\install.cmd (shortcuts + the Apps &
-# features entry) and leaves the uninstaller behind. No extra toolchain is involved.
+# for a folder, unpacks the package there and leaves the uninstaller behind. No extra
+# toolchain is involved.
+#
+# It does NOT run installer\install.cmd after unpacking, and it cannot: the official 7z.sfx
+# stub does not read an SFX configuration at all (measured: RunProgram and InstallPath are
+# ignored, and the stub contains no @Install@/RunProgram strings - those belong to 7zSD.sfx
+# from the LZMA SDK). The shortcuts and the "Apps & features" entry are created by the
+# program itself on its first start, after asking; install.cmd stays in the folder as the
+# manual entry point.
 #
 # Usage: pwsh -NoProfile -File installer\build.ps1
 
@@ -36,6 +43,23 @@ try {
   Copy-Item -Path (Join-Path $package "*") -Destination $staging -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install.cmd") -Destination $staging -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install.ps1") -Destination $staging -Force
+
+  # The hash list must describe the payload as it is packed, and these two scripts are added
+  # after tests\deploy.ps1 wrote the list for the package folder. Without this the installed
+  # folder would ship a list that does not mention its own install scripts (114 files in the
+  # payload, 111 entries in the list - measured), and the uninstaller is driven by that list.
+  $manifest = Join-Path $staging "SHA256SUMS.txt"
+  $lines = New-Object System.Collections.Generic.List[string]
+  $lines.Add("# 7-Zip Password Vault 26.03 - SHA-256 of every file in this package")
+  Get-ChildItem -LiteralPath $staging -Recurse -File |
+    Where-Object { $_.Name -ne "SHA256SUMS.txt" } |
+    Sort-Object FullName |
+    ForEach-Object {
+      $rel = $_.FullName.Substring($staging.Length + 1)
+      $lines.Add(("{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower(), $rel))
+    }
+  [IO.File]::WriteAllLines($manifest, $lines, (New-Object System.Text.UTF8Encoding($true)))
+  Write-Host ("  payload hash list rebuilt ({0} files)" -f ($lines.Count - 1))
 
   $payload = Join-Path $staging "..\payload.7z"
   & $sevenZip a -t7z -mx=9 -bso0 -bsp0 $payload (Join-Path $staging "*") | Out-Null

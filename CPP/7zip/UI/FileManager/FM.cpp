@@ -2,6 +2,8 @@
 
 #include "StdAfx.h"
 
+#include "SetupShortcuts.h"   // first start: shortcuts + "Apps & features" entry
+
 #include "../../../Common/MyWindows.h"
 
 #if defined(__MINGW32__) || defined(__MINGW64__)
@@ -420,6 +422,12 @@ static BOOL InitInstance(int nCmdShow)
   else
   #endif
     wnd.Show(nCmdShow);
+
+  /* First start only: offer the Start Menu / desktop shortcuts and the "Apps & features"
+     entry. The self-extracting package cannot run anything after unpacking (7z.sfx ignores
+     its configuration), so this is where a downloaded package becomes convenient. Asked once,
+     current user only, and 7zG.exe never asks. */
+  SetupShortcuts_AskIfNeeded((HWND)wnd);
 
   return TRUE;
 }

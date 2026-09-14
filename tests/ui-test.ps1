@@ -949,6 +949,11 @@ Set-ItemProperty -Path $regKey -Name "ShowPasswordInList" -Value 0 -Type DWord  
 Set-ItemProperty -Path $regKey -Name "CloseAfterFill"    -Value 1 -Type DWord   # close after filling by default
 Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 Check "the test does not use the real vault" ($vault -ne $realVault)
+# The program asks on its first start whether it should create shortcuts and an "Apps &
+# features" entry. The suite must not walk into that modal question on every start, so it
+# records an answer up front - the isolation snapshot restores the real value afterwards
+# (test 26 removes it again on purpose to check the question itself).
+Set-ItemProperty -Path $regKey -Name "SetupAsked" -Value 1 -Type DWord
 Clear-OwnInstances
 Write-Host ("  UI language: {0}{1}" -f $UiLang, $(if ($script:restoreLang) { " (forced through HKCU\Software\7-Zip\Lang)" } else { "" })) -ForegroundColor DarkGray
 
@@ -2245,34 +2250,40 @@ if (-not (Test-Path -LiteralPath $realRoaming)) {
   Remove-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue
   # a valid vault of this run (readable through DPAPI), not the user's file
   Copy-Item -LiteralPath $vault -Destination $portableVault -Force
-  Check "both default vault files exist now" ((Test-Path -LiteralPath $portableVault) -and (Test-Path -LiteralPath $realRoaming))
+  try {
+    Check "both default vault files exist now" ((Test-Path -LiteralPath $portableVault) -and (Test-Path -LiteralPath $realRoaming))
 
-  $p = Start-Fm $archive
-  $q = Wait-Dialog ([uint32]$p.Id) $T.Caption 15
-  Check "the program asks which vault to use" ($q -ne [IntPtr]::Zero)
-  if ($q -ne [IntPtr]::Zero) {
-    [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($q, 7))   # IDNO = the one in %APPDATA%
-    $note = Wait-Dialog ([uint32]$p.Id) $T.Caption 8
-    Check "the answer is confirmed with the chosen location" ($note -ne [IntPtr]::Zero)
-    if ($note -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $note $T.Caption) }
+    $p = Start-Fm $archive
+    $q = Wait-Dialog ([uint32]$p.Id) $T.Caption 15
+    Check "the program asks which vault to use" ($q -ne [IntPtr]::Zero)
+    if ($q -ne [IntPtr]::Zero) {
+      [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($q, 7))   # IDNO = the one in %APPDATA%
+      $note = Wait-Dialog ([uint32]$p.Id) $T.Caption 8
+      Check "the answer is confirmed with the chosen location" ($note -ne [IntPtr]::Zero)
+      if ($note -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $note $T.Caption) }
+    }
+    $chosen = (Get-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue).VaultPath
+    Check "the choice is recorded, so the question is not repeated" ($chosen -eq $realRoaming) "(got [$chosen])"
+    Stop-Fm $p
+
+    # the second start must not ask again (an unrelated message box would say something else)
+    $p = Start-Fm $archive
+    $again = Wait-Dialog ([uint32]$p.Id) $T.Caption 8
+    if ($again -eq [IntPtr]::Zero) {
+      Check "the question does not come back" $true
+    } else {
+      $said = [VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($again, 65535))
+      # an empty text is not evidence that the box is a different one: fail instead of
+      # passing on "nothing was said"
+      Check "the question does not come back" ($said.Length -gt 0 -and $said -notmatch "密码库|vault") "(box said [$said])"
+      [void](Close-Box ([uint32]$p.Id) $again $T.Caption)
+    }
+    Stop-Fm $p
+  } finally {
+    # the copy must not survive, whatever happens above: it is a vault file inside the
+    # folder that gets packaged
+    Remove-Item -LiteralPath $portableVault -Force -ErrorAction SilentlyContinue
   }
-  $chosen = (Get-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue).VaultPath
-  Check "the choice is recorded, so the question is not repeated" ($chosen -eq $realRoaming) "(got [$chosen])"
-  Stop-Fm $p
-
-  # the second start must not ask again (an unrelated message box would say something else)
-  $p = Start-Fm $archive
-  $again = Wait-Dialog ([uint32]$p.Id) $T.Caption 8
-  if ($again -eq [IntPtr]::Zero) {
-    Check "the question does not come back" $true
-  } else {
-    $said = [VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($again, 65535))
-    Check "the question does not come back" ($said -notmatch "密码库|vault") "(box said [$said])"
-    [void](Close-Box ([uint32]$p.Id) $again $T.Caption)
-  }
-  Stop-Fm $p
-
-  Remove-Item -LiteralPath $portableVault -Force -ErrorAction SilentlyContinue
   Check "the portable test vault was removed again" (-not (Test-Path -LiteralPath $portableVault))
 }
 
@@ -2338,6 +2349,41 @@ if (Test-Path $out) {
   Check "the extracted content is right" (((Get-Content $out -Raw).Trim()) -eq "secret content")
 }
 Check "7zG finished (proof)" ($g.HasExited)
+# ---------------------------------------------------------------- test 26
+Write-Host "`n== 26. first start: the shortcuts question is asked once ==" -ForegroundColor Cyan
+# The self-extracting package cannot run anything after unpacking (the 7z.sfx stub ignores
+# its configuration - measured), so the program itself offers the Start Menu / desktop
+# shortcuts and the "Apps & features" entry on its first start. Asked once, and "no" counts
+# as an answer: the question must not come back on every start.
+$deskShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "7-Zip Password Vault.lnk"
+$startShortcut = Join-Path (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs") "7-Zip Password Vault.lnk"
+$hadDesk = Test-Path -LiteralPath $deskShortcut
+$hadStart = Test-Path -LiteralPath $startShortcut
+Remove-ItemProperty -Path $regKey -Name "SetupAsked" -ErrorAction SilentlyContinue
+
+$p = Start-Fm ""
+$q = Wait-Dialog ([uint32]$p.Id) $T.Caption 15
+Check "the first start asks about the shortcuts" ($q -ne [IntPtr]::Zero) "(no question box)"
+if ($q -ne [IntPtr]::Zero) {
+  $said = [VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($q, 65535))
+  Check "the question mentions shortcuts" ($said -match "快捷方式|shortcut") "(box said [$said])"
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($q, 7))   # IDNO = do not create them
+  Start-Sleep -Milliseconds 900
+}
+$asked = (Get-ItemProperty -Path $regKey -Name "SetupAsked" -ErrorAction SilentlyContinue).SetupAsked
+Check "the answer is remembered (1 = already asked)" ($asked -eq 1) "(SetupAsked=[$asked])"
+Check "answering no created no desktop shortcut" ((Test-Path -LiteralPath $deskShortcut) -eq $hadDesk) "(desktop shortcut appeared)"
+Check "answering no created no start menu shortcut" ((Test-Path -LiteralPath $startShortcut) -eq $hadStart) "(start menu shortcut appeared)"
+Check "no uninstall entry was registered" (
+  (Test-Path -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\7ZipPasswordVault") -eq $false) `
+  "(an uninstall entry appeared)"
+Stop-Fm $p
+
+$p = Start-Fm ""
+$again = Wait-Dialog ([uint32]$p.Id) $T.Caption 6
+Check "the question does not come back on the next start" ($again -eq [IntPtr]::Zero)
+Stop-Fm $p
+
 if (-not $g.HasExited) { Stop-Process -Id $g.Id -Force }
 } finally {
   Stop-Fm $null

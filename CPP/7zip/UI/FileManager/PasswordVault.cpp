@@ -536,9 +536,9 @@ bool CPasswordVault::GetTwoDefaults(UString &portable, UString &roaming)
 
 void CPasswordVault::SetConfiguredPath(const UString &path)
 {
-  NPasswordVault::CInfo settings;
-  settings.VaultPath = us2fs(path);
-  settings.Save();
+  /* Only this one value: writing all nine (CInfo::Save) would roll back whatever the other
+     process - 7zFM and 7zG share this key - changed while the user was answering. */
+  NPasswordVault::CInfo::SaveVaultPath(us2fs(path));
 }
 
 UString CPasswordVault::AdoptPortableDefault()

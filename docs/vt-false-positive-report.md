@@ -105,3 +105,47 @@ re-submit the two executables (and the installer) to Microsoft as false positive
 because every rebuild needs its own submission; sign the binaries if a certificate is
 available. 建议以**便携版 zip** 为默认下载，安装器作为便捷选项保留，并把两个可执行文件
 与安装器重新提交微软误报，每次重新构建都要重新提交；有证书时给二进制签名。
+
+---
+
+## After the reduction work (2026-09-14, same day) / 降检测改造后的复测
+
+Following the attribution experiments in `docs/vt-attribution.md` - the self-extracting
+wrapper and the "unsigned binary claiming the official identity" shape were the two
+measurable causes - the build was changed: honest `VERSIONINFO`
+(`CompanyName=Nomoziya`, `ProductName=7-Zip Password Vault`), an explicit
+`asInvoker` manifest, `-Wl,--no-insert-timestamp` (reproducible: two re-links are byte
+identical), the dead `RunProgram`/`InstallPath` config keys removed, and the shortcuts /
+"Apps & features" entry moved into the program's first start (no script runs out of the
+package any more). Same files, same toolchain, measured again:
+
+| File | before | after | what changed |
+|------|--------|-------|--------------|
+| `7z-password-vault-26.03-win64-portable.zip` | 1/67 (Elastic) | **0/68** | Elastic cleared |
+| `7z-password-vault-26.03-win64-setup.exe` | 3/70 (Microsoft `Wacatac.C!ml`, Elastic, CrowdStrike) | **2/70** (CrowdStrike `grayware_60%`, Elastic) | Microsoft cleared |
+| `7zFM.exe` | 2/70 (Microsoft `Wacatac.B!ml`, Elastic) | **1/69** (Microsoft `Wacatac.B!ml`) | Elastic cleared |
+| `7zG.exe` | 1/70 (Microsoft `Wacatac.C!ml`) | **1/70** (Microsoft `Wacatac.B!ml`) | variant changed, count equal |
+
+Total: **7 detections → 4**. The portable package is now clean on VirusTotal.
+
+What is left and why:
+
+* **Microsoft `Wacatac.B!ml` on the two rebuilt executables** - a machine-learning verdict
+  on the PE shape of an unsigned binary. It did not change with the honest version
+  resource, which matches what the attribution data said: the `A3` probe (official stub +
+  payload with non-rebuilt binaries) was already 2/70, i.e. Microsoft reacts to the
+  wrapper shape. The remaining fixes are a false-positive submission per build
+  (<https://www.microsoft.com/en-us/wdsi/filesubmission>, path *Software developer*) and,
+  for the long term, a code-signing certificate (SignPath for open source, Azure Trusted
+  Signing) - signatures are the only durable fix.
+* **Elastic (high) + CrowdStrike `grayware` on `setup.exe`** - the self-extracting wrapper
+  itself: `A3` showed 2/70 even with a benign payload, and the unmodified official
+  `7z.sfx` stub is 0/71 only because it is a bare stub without a payload. Dropping the
+  SFX entirely (portable zip only) would remove those two; the programme's first start now
+  does everything the wrapper was supposed to do.
+
+Submission IDs of this round / 本轮提交编号: `7zFM.exe`
+`MjljZWZiYTc3NzdkMDY3MGQxODk2YWU4NGE1MzViZTI6MTc4OTM5MDE4MA==`, `7zG.exe`
+`ZTNhZjQwZTE1MDZkMmFjZGJkOWQ0NDA4NzY4OTQ5NjU6MTc4OTM5MDQ1MA==`, `setup.exe`
+`NWFkYjIyNzA3ZGQ3N2ZmMzg4MjhiZmI4ZTAxNTg1OGY6MTc4OTM5MDA5Ng==`, `portable.zip`
+`OTA0MTAzNzliZTZjNDdmMjU5MTE3MmU1NmU5MjBiNTc6MTc4OTM5MDAxNA==`.
