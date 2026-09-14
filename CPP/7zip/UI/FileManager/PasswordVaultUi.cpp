@@ -151,6 +151,15 @@ bool CPasswordVaultUi::ShowList(HWND parent, CEdit &edit)
 
 bool CPasswordVaultUi::AddOrUpdate(HWND parent, const UString &name, const UString &password)
 {
+  if (!_loaded)
+  {
+    /* The vault could not be read (see Load). Saving now would write the empty list in
+       memory over whatever is on disk. */
+    VaultErrorMessage(parent, PasswordVault_GetText(IDT_PASSWORD_ERR_OPEN,
+        L"无法打开密码库文件：\n{0}\n{1}"));
+    return false;
+  }
+
   /* An empty name never identifies an entry: two unnamed entries have to stay
      two entries instead of overwriting each other. */
   const int index = name.IsEmpty() ? -1 : _vault.FindByName(name);

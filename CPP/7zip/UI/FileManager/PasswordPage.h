@@ -11,6 +11,9 @@ class CPasswordPage: public NWindows::NControl::CPropertyPage
   NWindows::NControl::CEdit _vaultPathEdit;
   bool _needSave;
   bool _initMode;
+  /* set while the page itself writes into the vault path box, so the resulting
+     EN_CHANGE does not mark the page as modified again right after a successful save */
+  bool _suppressChange;
   UString _oldVaultPath;
   bool _oldUseMaster;
 

@@ -94,3 +94,6 @@
 
 /* shown once when an old vault is moved next to the program (portable default) */
 #define IDT_PASSWORD_MOVED_TO_PORTABLE  3861
+
+/* the vault exists but cannot be opened (locked, no permission, ...) - not "empty" */
+#define IDT_PASSWORD_ERR_OPEN           3862

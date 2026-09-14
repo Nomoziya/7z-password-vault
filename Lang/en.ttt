@@ -457,6 +457,8 @@ Wrong master password, or the vault file is damaged
 Random number generation failed
 3861
 The vault file was moved next to the program:\n\n{0}
+3862
+Cannot open the vault file:\n{0}\n{1}
 3900
 Elapsed time:
 Remaining time:

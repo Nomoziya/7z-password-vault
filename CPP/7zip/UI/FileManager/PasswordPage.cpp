@@ -75,6 +75,7 @@ bool CPasswordPage::OnInit()
 {
   _initMode = true;
   _needSave = false;
+  _suppressChange = false;
 
   #ifdef Z7_LANG
   LangSetDlgItems(*this, kLangIDs, Z7_ARRAY_SIZE(kLangIDs));
@@ -393,6 +394,9 @@ bool CPasswordPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
 
 bool CPasswordPage::OnCommand(unsigned code, unsigned itemID, LPARAM param)
 {
+  if (_suppressChange)
+    return CDialog::OnCommand(code, itemID, param);
+
   if (code == EN_CHANGE && itemID == IDE_PASSWORD_VAULT_PATH)
   {
     ModifiedEvent();
@@ -467,6 +471,9 @@ LONG CPasswordPage::OnApply()
       NPasswordVault::CInfo back;
       back.Load();
       back.UseMasterPassword = _oldUseMaster;
+      /* The path is rolled back as well: a stored path that points at a file which was
+         never written would make the next start show an empty vault. */
+      back.VaultPath = _oldVaultPath;
       back.Save();
       ErrorBox(*this, error);
       return PSNRET_INVALID_NOCHANGEPAGE;
@@ -484,8 +491,11 @@ LONG CPasswordPage::OnApply()
   }
 
   /* Show the path that is really used, so a folder entry is visibly resolved to
-     the file inside it. */
+     the file inside it. The page must not look modified again afterwards, so the
+     resulting EN_CHANGE is suppressed. */
+  _suppressChange = true;
   _vaultPathEdit.SetText(newPath);
+  _suppressChange = false;
 
   _oldVaultPath = us2fs(pathU);
   _oldUseMaster = newUseMaster;

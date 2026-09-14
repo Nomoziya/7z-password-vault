@@ -208,6 +208,14 @@ static bool CanWriteToFolder(const UString &folder)
   probe.Add_PathSepar();
   probe += kDefaultFileName;
   probe += L".writetest";
+  /* a per process name: two processes (7zFM and 7zG) probing at the same moment would
+     otherwise see each other's file and both conclude "not writable" */
+  {
+    UString pid;
+    pid.Add_UInt32((UInt32)::GetCurrentProcessId());
+    probe += L".";
+    probe += pid;
+  }
   /* FILE_FLAG_DELETE_ON_CLOSE: the probe removes itself when the handle is closed. */
   HANDLE h = ::CreateFileW(probe, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
       FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
@@ -215,6 +223,17 @@ static bool CanWriteToFolder(const UString &folder)
     return false;
   ::CloseHandle(h);
   return true;
+}
+
+static bool FileSizeMatches(const UString &path, const ULARGE_INTEGER &expected)
+{
+  WIN32_FILE_ATTRIBUTE_DATA data;
+  if (!::GetFileAttributesExW(path, GetFileExInfoStandard, &data))
+    return false;
+  ULARGE_INTEGER actual;
+  actual.LowPart = data.nFileSizeLow;
+  actual.HighPart = data.nFileSizeHigh;
+  return actual.QuadPart == expected.QuadPart;
 }
 
 static void EnsureFolderExists(const UString &filePath)
@@ -508,8 +527,31 @@ UString CPasswordVault::AdoptPortableDefault()
   if (::GetFileAttributesW(roaming) == INVALID_FILE_ATTRIBUTES)
     return UString();   /* no old vault to move */
 
-  if (!::MoveFileExW(roaming, portable, 0))
+  ULARGE_INTEGER sizeBefore;
+  sizeBefore.QuadPart = 0;
+  {
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    if (::GetFileAttributesExW(roaming, GetFileExInfoStandard, &data))
+    {
+      sizeBefore.LowPart = data.nFileSizeLow;
+      sizeBefore.HighPart = data.nFileSizeHigh;
+    }
+  }
+  /* MOVEFILE_COPY_ALLOWED: %APPDATA% and the program folder are often on different
+     drives, and without this flag the move simply fails there (the portable default
+     then never happens and the user is never told). When it copies, the source is only
+     deleted after a successful copy. */
+  if (!::MoveFileExW(roaming, portable, MOVEFILE_COPY_ALLOWED))
     return UString();   /* the old location stays in use */
+
+  /* A copy that was interrupted between the copy and the delete would leave a partial
+     file at the new place: check it before it is used. */
+  if (!FileSizeMatches(portable, sizeBefore))
+  {
+    ::DeleteFileW(portable);
+    return UString();
+  }
+
 
   UString message = PasswordVault_GetText(IDT_PASSWORD_MOVED_TO_PORTABLE,
       L"密码库文件已移动到程序所在文件夹：\n\n{0}");
@@ -536,7 +578,19 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
 
   CInFile f;
   if (!f.Open(_path))
-    return true; // no file -> empty vault
+  {
+    /* "no file yet" and "cannot open the file" are very different: the first is an
+       empty vault, the second (a lock, a permission problem, a read-only volume) used
+       to look like an empty vault too - and then the next save wrote that empty list
+       over the real file. */
+    const DWORD sysError = ::GetLastError();
+    if (::GetFileAttributesW(_path) == INVALID_FILE_ATTRIBUTES)
+      return true; // really does not exist yet
+    SetPathError(errorMessage, IDT_PASSWORD_ERR_OPEN,
+        L"无法打开密码库文件：\n{0}\n{1}", _path, sysError);
+    return false;
+  }
+
 
   char magic[4];
   if (!ReadBuf(f, magic, 4) || memcmp(magic, kMagic, 4) != 0)

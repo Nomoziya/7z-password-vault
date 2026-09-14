@@ -56,6 +56,16 @@ function Ok([string]$text) { Write-Host "  [removed] $text" -ForegroundColor Gre
 function Keep([string]$text) { Write-Host "  [kept]    $text" -ForegroundColor Yellow; $script:kept.Add($text) }
 function Skip([string]$text) { Write-Host "  [skip]    $text" -ForegroundColor DarkGray }
 
+# A path is only "ours" when it is inside the install folder AND behind a separator:
+# "C:\7-Zip-old" must not count as being inside "C:\7-Zip".
+function Test-InsideDir([string]$path, [string]$dir) {
+  if (-not $path) { return $false }
+  $p = $path.Trim().Trim([char]34)
+  $d = $dir.TrimEnd([char]92)
+  return ($p.Equals($d, [StringComparison]::OrdinalIgnoreCase) -or
+          $p.StartsWith($d + [char]92, [StringComparison]::OrdinalIgnoreCase))
+}
+
 function Remove-ItemSafe([string]$path, [string]$what) {
   if (-not (Test-Path -LiteralPath $path)) { Skip "$what ($path does not exist)"; return }
   if ($WhatIf) { Say "  [would remove] $what -> $path"; return }
@@ -168,7 +178,7 @@ foreach ($name in "7zFM", "7zG", "7z", "7zCon") {
   foreach ($proc in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
     $path = ""
     try { $path = $proc.Path } catch { }
-    if ($path -and $path.StartsWith($installDirFull, [StringComparison]::OrdinalIgnoreCase)) {
+    if (Test-InsideDir $path $installDirFull) {
       if (-not $WhatIf) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
       Say ("  [stopped] {0} (pid {1})" -f $path, $proc.Id)
       $stopped++
@@ -186,7 +196,7 @@ Remove-RegKeySafe $regRoot "7-Zip per-user settings (vault options, associations
 # the entry the installer created in "Apps & features"
 if (Test-Path -LiteralPath $uninstallEntry) {
   $entryLocation = (Get-ItemProperty -LiteralPath $uninstallEntry -Name InstallLocation -ErrorAction SilentlyContinue).InstallLocation
-  if (-not $entryLocation -or $entryLocation.TrimEnd("\") -eq $installDirFull) {
+  if (-not $entryLocation -or $entryLocation.TrimEnd([char]92).Equals($installDirFull, [StringComparison]::OrdinalIgnoreCase)) {
     Remove-RegKeySafe $uninstallEntry "Apps & features entry"
   } else { Skip "the Apps & features entry points at another folder: $entryLocation" }
 } else { Skip "no Apps & features entry" }
@@ -195,12 +205,28 @@ $classes = "HKCU:\Software\Classes"
 $ours = 0
 # file type keys "7-Zip.<ext>" and the "<ext>" keys that point at them
 if (Test-Path -LiteralPath $classes) {
+  # A "7-Zip.*" key is only ours when its command points into this folder: an officially
+  # installed 7-Zip uses the same names and keeps its own files, so deleting by name
+  # alone would wipe the associations of that installation.
+  function Test-ProgramKeyOurs([string]$programKey) {
+    $cmd = (Get-ItemProperty -LiteralPath (Join-Path $programKey "shell\open\command") -Name "(default)" -ErrorAction SilentlyContinue)."(default)"
+    if (-not $cmd) { $cmd = (Get-ItemProperty -LiteralPath (Join-Path $programKey "DefaultIcon") -Name "(default)" -ErrorAction SilentlyContinue)."(default)" }
+    if (-not $cmd) { return $false }
+    $exe = ($cmd -split [char]44)[0].Trim().Trim([char]34)
+    return (Test-InsideDir $exe $installDirFull)
+  }
   foreach ($key in @(Get-ChildItem -LiteralPath $classes -ErrorAction SilentlyContinue)) {
     $name = $key.PSChildName
-    if ($name -like "7-Zip.*") { Remove-RegKeySafe $key.PSPath "file type $name"; $ours++; continue }
+    if ($name -like "7-Zip.*") {
+      if (Test-ProgramKeyOurs $key.PSPath) { Remove-RegKeySafe $key.PSPath "file type $name"; $ours++ }
+      else { Skip "$name belongs to another 7-Zip, left alone" }
+      continue
+    }
     if ($name -like ".*") {
       $value = (Get-ItemProperty -LiteralPath $key.PSPath -Name "(default)" -ErrorAction SilentlyContinue)."(default)"
-      if ($value -like "7-Zip.*") { Remove-RegKeySafe $key.PSPath "association $name -> $value"; $ours++ }
+      if ($value -like "7-Zip.*" -and (Test-ProgramKeyOurs (Join-Path $classes $value))) {
+        Remove-RegKeySafe $key.PSPath "association $name -> $value"; $ours++
+      }
     }
   }
   # the shell extension is registered as a COM class pointing at 7-zip.dll
@@ -208,7 +234,7 @@ if (Test-Path -LiteralPath $classes) {
   if (Test-Path -LiteralPath $clsidRoot) {
     foreach ($clsid in @(Get-ChildItem -LiteralPath $clsidRoot -ErrorAction SilentlyContinue)) {
       $server = (Get-ItemProperty -LiteralPath (Join-Path $clsid.PSPath "InprocServer32") -Name "(default)" -ErrorAction SilentlyContinue)."(default)"
-      if ($server -and $server.Trim('"').StartsWith($installDirFull, [StringComparison]::OrdinalIgnoreCase)) {
+      if (Test-InsideDir $server $installDirFull) {
         Remove-RegKeySafe $clsid.PSPath "shell extension $($clsid.PSChildName)"
         $ours++
       }
@@ -231,7 +257,7 @@ foreach ($dir in $shortcutDirs) {
   foreach ($lnk in @(Get-ChildItem -LiteralPath $dir -Filter *.lnk -Recurse -ErrorAction SilentlyContinue)) {
     try {
       $target = $shell.CreateShortcut($lnk.FullName).TargetPath
-      if ($target -and $target.StartsWith($installDirFull, [StringComparison]::OrdinalIgnoreCase)) {
+      if (Test-InsideDir $target $installDirFull) {
         Remove-ItemSafe $lnk.FullName "shortcut"; $found++
       }
     } catch { }
@@ -247,7 +273,12 @@ if ($AllUsers) {
   if (-not $isAdmin) {
     Say "  [skip]    needs an administrator: run this again from an elevated prompt with -AllUsers" -ForegroundColor Yellow
   } else {
-    Remove-RegKeySafe "HKLM:\SOFTWARE\7-Zip" "7-Zip machine settings"
+    $machineDir = (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\7-Zip" -Name "Path" -ErrorAction SilentlyContinue).Path
+    if (-not $machineDir -or (Test-InsideDir $machineDir $installDirFull)) {
+      Remove-RegKeySafe "HKLM:\SOFTWARE\7-Zip" "7-Zip machine settings"
+    } else {
+      Skip "the machine-wide 7-Zip settings point at $machineDir, left alone"
+    }
     $hklmClasses = "HKLM:\SOFTWARE\Classes"
     if (Test-Path -LiteralPath $hklmClasses) {
       foreach ($key in @(Get-ChildItem -LiteralPath $hklmClasses -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like "7-Zip.*" })) {
@@ -268,7 +299,26 @@ if ($AllUsers) {
 Say ""
 Say "Vault file..."
 if ($VaultAction -eq "Keep") {
-  Keep "your saved passwords: $vaultPath"
+  if ((Test-InsideDir $vaultPath $installDirFull) -and (Test-Path -LiteralPath $vaultPath) -and -not $WhatIf) {
+    # The default location is next to the program and the program folder is removed
+    # below, so "kept" has to mean moved out of the way first - otherwise the promise
+    # would be a lie and the passwords would be gone for good.
+    $rescue = Join-Path $env:USERPROFILE ("7zPasswordVault-{0}.dat" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
+    try {
+      Move-Item -LiteralPath $vaultPath -Destination $rescue -Force -ErrorAction Stop
+    } catch {
+      Say ""
+      Say "  [STOP] the vault file is inside the program folder and could not be moved:" -ForegroundColor Red
+      Say "         $vaultPath" -ForegroundColor Red
+      Say "         $($_.Exception.Message)" -ForegroundColor Red
+      Say "  Move it somewhere else by hand, then run the uninstaller again." -ForegroundColor Red
+      exit 1
+    }
+    $vaultPath = $rescue
+    Keep "your saved passwords (moved out of the program folder): $rescue"
+  } else {
+    Keep "your saved passwords: $vaultPath"
+  }
   $tmp = "$vaultPath.tmp"
   if (Test-Path -LiteralPath $tmp) { Remove-ItemSafe $tmp "leftover temporary vault" }
 } else {
@@ -289,22 +339,44 @@ if ($WhatIf) {
   Say "  [would remove] $installDirFull (everything in it)"
 } else {
   $self = $MyInvocation.MyCommand.Path
-  $sibling = @(Get-ChildItem -LiteralPath $installDirFull -File -ErrorAction SilentlyContinue |
-               Where-Object { $_.Name -ne (Split-Path $self -Leaf) })
-  foreach ($f in $sibling) { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue }
-  foreach ($d in @(Get-ChildItem -LiteralPath $installDirFull -Directory -ErrorAction SilentlyContinue)) {
-    Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
+  # Only the files that ship with this package are removed by name. The folder may be a
+  # download or tools folder that holds other things, and a portable package must not
+  # delete what it does not own.
+  $ours = @("7zFM.exe", "7zG.exe", "7z.exe", "7z.dll", "7-zip.dll", "7-zip32.dll",
+            "7z.sfx", "7zCon.sfx", "7-zip.chm", "History.txt", "License.txt", "readme.txt",
+            "descript.ion", "README.md", "BUILD.md", "uninstall.cmd", "uninstall.ps1")
+  $removedFiles = 0
+  foreach ($name in $ours) {
+    $f = Join-Path $installDirFull $name
+    if (Test-Path -LiteralPath $f) {
+      Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+      if (-not (Test-Path -LiteralPath $f)) { $removedFiles++ }
+    }
   }
-  # the script itself cannot remove its own folder while it runs from there: hand the
-  # last step to a detached shell that waits a moment.
+  foreach ($d in @("Lang", "Codecs", "Formats")) {
+    $dd = Join-Path $installDirFull $d
+    if (Test-Path -LiteralPath $dd) { Remove-Item -LiteralPath $dd -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+  Ok ("program files removed ({0} files, Lang/Codecs/Formats)" -f $removedFiles)
+  $leftFiles = @(Get-ChildItem -LiteralPath $installDirFull -File -Force -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -ne (Split-Path $self -Leaf) })
+  $leftDirs = @(Get-ChildItem -LiteralPath $installDirFull -Directory -Force -ErrorAction SilentlyContinue)
   Remove-Item -LiteralPath $self -Force -ErrorAction SilentlyContinue
-  if (Test-Path -LiteralPath $installDirFull) {
+  if ($leftFiles.Count -eq 0 -and $leftDirs.Count -eq 0) {
+    # nothing of ours and nothing foreign left: remove the (empty) folder itself, which
+    # the running script may still hold for a moment, so a helper does it.
     Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "timeout", "/t", "2", ">nul", "&",
-        "rmdir", "/s", "/q", "`"$installDirFull`"") -WindowStyle Hidden
-    Say "  [removing] $installDirFull (a helper finishes this in a second)"
-    Ok "program folder (scheduled)"
+        "rmdir", "/q", "`"$installDirFull`"") -WindowStyle Hidden
+    Ok "program folder (emptied; a helper removes the folder itself)"
   } else {
-    Ok "program folder"
+    Say ""
+    Say "  [kept]    this folder still holds something that is not ours, so it stays:" -ForegroundColor Yellow
+    Say "            $installDirFull" -ForegroundColor Yellow
+    ($leftFiles + $leftDirs) | Select-Object -First 12 | ForEach-Object { Say "              $($_.Name)" -ForegroundColor Yellow }
+    if (($leftFiles.Count + $leftDirs.Count) -gt 12) {
+      Say ("              ... and {0} more" -f ($leftFiles.Count + $leftDirs.Count - 12)) -ForegroundColor Yellow
+    }
+    Keep "the program folder (it holds other files): $installDirFull"
   }
 }
 
