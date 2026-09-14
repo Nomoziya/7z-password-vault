@@ -48,7 +48,9 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $root = Split-Path $PSScriptRoot -Parent
 if (-not $PackageDir) { $PackageDir = Join-Path $root "7-Zip-密码管家版" }
-if (-not $Package) { $Package = Join-Path $root "dist\7z-password-vault-26.03-win64-setup.exe" }
+# The published download is the portable zip; a self-extracting package can still be given
+# explicitly with -Package (installer\build.ps1 -WithSetup).
+if (-not $Package) { $Package = Join-Path $root "dist\7z-password-vault-26.03-win64-portable.zip" }
 
 $work = Join-Path $env:TEMP ("7zpw-install-acceptance-{0}-{1}" -f (Get-Date -Format "HHmmss"), $PID)
 $extractDir = Join-Path $work "payload"
@@ -434,7 +436,10 @@ try {
     Check "the uninstaller used the hash list, not the by-name fallback" `
       (($r.Out -notmatch "by name") -and ($r.Out -match "SHA256SUMS|hash list")) "(output was [$($r.Out.Trim())])"
     Check "no file of the payload survived anywhere in the folder" ($left.Count -eq 0) "(left: $($left -join ', '))"
-    Check "the per-user settings key of the uninstaller was removed" (-not (Test-Path -LiteralPath $regRoot))
+    Check "the vault settings subkey was removed by the uninstaller" `
+      (-not (Test-Path -LiteralPath (Join-Path $regRoot "PasswordVault")))
+    Check "the rest of HKCU\Software\7-Zip was kept (it is shared with 7-Zip itself)" `
+      (Test-Path -LiteralPath $regRoot)
 
     # the uninstaller must not have written into the user's own vault folder
     foreach ($f in $script:rescueBefore) {

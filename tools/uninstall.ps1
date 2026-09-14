@@ -228,7 +228,13 @@ if ($VaultAction -eq "Keep" -and (Test-InsideDir $vaultPath $installDirFull) -an
 # ---------------------------------------------------------------- registry (per user)
 Say ""
 Say "Registry (current user)..."
-Remove-RegKeySafe $regRoot "7-Zip per-user settings (vault options, associations, panel)"
+# Only the values this package owns are removed. HKCU\Software\7-Zip is shared with 7-Zip
+# itself (language, panel layout, paths, extract settings), and an official 7-Zip installed
+# side by side keeps its settings there: deleting the whole key would silently reset another
+# program. Everything this package writes lives in the PasswordVault subkey (location,
+# switches, "already asked about the shortcuts"), plus the uninstall entry, the associations
+# and the shortcuts handled below.
+Remove-RegKeySafe (Join-Path $regRoot "PasswordVault") "vault settings (location, switches)"
 
 # the entry the installer created in "Apps & features"
 if (Test-Path -LiteralPath $uninstallEntry) {

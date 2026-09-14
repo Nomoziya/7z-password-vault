@@ -72,6 +72,10 @@ function Write-HashList([string]$dir, [string[]]$skip = @(), [string[]]$extra = 
 }
 
 function New-FakeState([string]$installDir, [string]$vaultPath) {
+  # A value in the parent key that belongs to 7-Zip itself: the uninstaller must leave it
+  # alone, because HKCU\Software\7-Zip is shared with an official installation.
+  New-Item -Path $regRoot -Force | Out-Null
+  Set-ItemProperty -Path $regRoot -Name "SettingsThatBelongToUpstream7Zip" -Value 1 -Type DWord
   New-Item -Path $regKey -Force | Out-Null
   Set-ItemProperty -Path $regKey -Name "VaultPath" -Value $vaultPath -Type String
   Set-ItemProperty -Path $regKey -Name "UseMasterPassword" -Value 0 -Type DWord
@@ -122,7 +126,9 @@ try {
     $backupText = Get-Content -LiteralPath $settingsBackup -Raw
     Check "the backup really holds the settings" ($backupText -match "VaultPath") "(size $($backupText.Length))"
   }
-  Check "HKCU\Software\7-Zip was removed" (-not (Test-Path -LiteralPath $regRoot))
+  Check "the vault settings subkey was removed" (-not (Test-Path -LiteralPath $regKey))
+Check "the rest of HKCU\Software\7-Zip was kept (an official 7-Zip lives there too)" `
+  ((Get-ItemProperty -Path $regRoot -Name "SettingsThatBelongToUpstream7Zip" -ErrorAction SilentlyContinue)."SettingsThatBelongToUpstream7Zip" -eq 1)
   Check "the per-user file type was removed" (-not (Test-Path -LiteralPath (Join-Path $classes "7-Zip.zztest")))
   Check "the per-user association was removed" (-not (Test-Path -LiteralPath (Join-Path $classes ".zztest")))
   Check "an association of another 7-Zip was kept" (Test-Path -LiteralPath (Join-Path $classes "7-Zip.zzforeign"))
@@ -149,7 +155,7 @@ try {
   $out = Invoke-Uninstaller $install @("-DeleteVault", "-Yes")
   Start-Sleep -Seconds 3
   Check "the vault file was deleted" (-not (Test-Path -LiteralPath $vaultB))
-  Check "HKCU\Software\7-Zip was removed again" (-not (Test-Path -LiteralPath $regRoot))
+  Check "the vault settings subkey was removed again" (-not (Test-Path -LiteralPath $regKey))
   Check "the real vault file was untouched" ((Test-Path -LiteralPath $realVault) -eq $hadVault) "(was $hadVault)"
   Check "the program folder was removed" (-not (Test-Path -LiteralPath $install))
 

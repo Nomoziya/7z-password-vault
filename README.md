@@ -176,11 +176,12 @@ uninstall.cmd -WhatIf         :: only print what would be removed
 ```
 
 It stops the `7zFM`/`7zG` processes started from that folder, removes
-`HKCU\Software\7-Zip` (the vault options and 7-Zip's own per-user settings), the
+`HKCU\Software\7-Zip\PasswordVault` (the vault location and switches — **not** the rest of
+`HKCU\Software\7-Zip`, which an official 7-Zip installation shares), the
 per-user file associations and the shell-extension registration **that point at that
-folder**, shortcuts that point at it, and the folder itself. Before the settings key
+folder**, shortcuts that point at it, and the folder itself. Before the vault settings key
 is deleted it is exported to `%TEMP%\7zip-vault-settings-<date>.reg`, because that key
-also holds the vault path, and the summary tells you how to restore it
+is the only place the vault path is remembered, and the summary tells you how to restore it
 (`reg import "<file>"`). The vault file is the one thing you choose: keep it and a
 reinstall finds your passwords again without a manual step: it is moved to
 `%APPDATA%\7-Zip\7zPasswordVault.dat`, which is where the program looks next. Only the
@@ -402,10 +403,11 @@ uninstall.cmd -NoBackup       :: 不写设置备份
 uninstall.cmd -WhatIf         :: 只打印将删除什么，不动手
 ```
 
-它会结束从该目录启动的 `7zFM`/`7zG` 进程、删除 `HKCU\Software\7-Zip`（密码库选项
-与 7-Zip 自身的每用户设置）、**指向该目录的**每用户文件关联与右键菜单扩展注册、
-指向它的快捷方式，最后删掉整个目录。删除设置键之前会先把它导出到
-`%TEMP%\7zip-vault-settings-<日期>.reg`（该键里也存着密码库路径），结尾会打印文件位置与
+它会结束从该目录启动的 `7zFM`/`7zG` 进程、删除
+`HKCU\Software\7-Zip\PasswordVault`（密码库位置与开关 —— **不动** `HKCU\Software\7-Zip` 的其余部分，
+那部分是与官方 7-Zip 共用的）、**指向该目录的**每用户文件关联与右键菜单扩展注册、
+指向它的快捷方式，最后删掉整个目录。删除密码库设置键之前会先把它导出到
+`%TEMP%\7zip-vault-settings-<日期>.reg`（该键是记住密码库路径的唯一位置），结尾会打印文件位置与
 恢复命令 `reg import "<文件>"`。唯一由你决定的是密码库文件：选**保留**时它会先被移出程序目录到
 `%APPDATA%\7-Zip\7zPasswordVault.dat`（程序在程序目录找不到库时正是去这里找），因此重装后无需手工
 步骤即可继续使用；目录里只删随包发布的文件，若目录里还有你自己的东西则整个保留并列出。原说明如下
