@@ -867,29 +867,11 @@ function Restore-PreviousRun {
 }
 Restore-PreviousRun
 
-# reg save/restore needs SeBackupPrivilege, which a normal user does not hold (measured:
-# "A required privilege is not held by the client"), so the values are snapshotted with
-# PowerShell instead - value names, data and types included.
-$script:registryWasThere = Test-Path "HKCU:\Software\7-Zip"
-$script:settingsSnapshot = $null
-if ($script:registryWasThere) {
-  $bag = @{}
-  foreach ($prop in (Get-ItemProperty -Path "HKCU:\Software\7-Zip")) {
-    if ($prop.Name -like "PS*") { continue }
-    $type = "String"
-    if ($prop.Value -is [int]) { $type = "DWord" }
-    elseif ($prop.Value -is [long]) { $type = "QWord" }
-    elseif ($prop.Value -is [array]) { $type = "MultiString" }
-    $bag[$prop.Name] = @{ value = $prop.Value; type = $type }
-  }
-  $script:settingsSnapshot = $bag
-}
+# The settings values are already snapshotted by Get-VaultSettings/Set-VaultSettings
+# above (values and types). What is added here is a copy of the real vault file and a
+# state file, so a run that is killed can be repaired by the next one.
 $script:realVaultExisted = Test-Path -LiteralPath $realVaultEarly
-if ($script:realVaultExisted) { Copy-Item -LiteralPath $realVaultEarly -Destination $realVaultBackup -Force }
-# the snapshot is written to disk so the next run can repair a killed run
-@{ settings = $script:settingsSnapshot; vault = $realVaultEarly; vaultBackup = $realVaultBackup; vaultExisted = $script:realVaultExisted; started = (Get-Date).ToString("s") } |
-  ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $stateFile -Encoding UTF8
-function Fill-Registry([hashtable]$bag) {
+if ($script:realVaultExisted) { Copy-Item -LiteralPath $realVaultEarly -Destination $realVaultBackup -Force }function Fill-Registry([hashtable]$bag) {
   Remove-Item -Path "HKCU:\Software\7-Zip" -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -Path "HKCU:\Software\7-Zip" -Force | Out-Null
   if ($null -eq $bag) { return }
@@ -899,17 +881,19 @@ function Fill-Registry([hashtable]$bag) {
 }
 
 function Restore-Isolation {
-  Fill-Registry $script:settingsSnapshot
-  if ($script:realVaultExisted -and (Test-Path -LiteralPath $realVaultBackup)) {
-    $dir = Split-Path -Parent $realVaultEarly
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    Copy-Item -LiteralPath $realVaultBackup -Destination $realVaultEarly -Force
-  }
-  Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue
+  # Every step is optional: a failure here must never take the run down (an exception in
+  # the restore would hide the result of the tests it is restoring for).
+  try { Set-VaultSettings $savedSettings }
+  catch { Write-Host "  restoring the registry failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+  try {
+    if ($script:realVaultExisted -and (Test-Path -LiteralPath $realVaultBackup)) {
+      $dir = Split-Path -Parent $realVaultEarly
+      New-Item -ItemType Directory -Force -Path $dir | Out-Null
+      Copy-Item -LiteralPath $realVaultBackup -Destination $realVaultEarly -Force
+    }
+  } catch { Write-Host "  restoring the vault failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+  try { Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue } catch { }
 }
-# a run that is stopped with Ctrl+C or closed must also put things back
-Register-EngineEvent -SourceIdentifier PowerShell.Exiting -SupportEvent -Action { Restore-Isolation } | Out-Null
-trap { Restore-Isolation; break }
 try {
 
 Write-Host "== setup ==" -ForegroundColor Cyan
@@ -1023,7 +1007,7 @@ if (Test-Path $vault) {
   Check "vault format version 3" ($b[4] -eq 3) "(got $($b[4]))"
   Check "DPAPI mode flag" ($b[5] -eq 0)
 }
-Check "password typed into input box" ([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($dlg,120)) -eq "Secret123")
+Check "password typed into input box" (Test-PasswordBox $dlg)
 Check "process still alive" (-not $p.HasExited)
 
 # ---------------------------------------------------------------- test 2
@@ -1054,7 +1038,7 @@ $lv = Wait-Child $lst 124
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "")
 Start-Sleep -Milliseconds 200
 [VaultUiTest]::ClickListCell($lv, 0, $true)           # double click the name cell
-Check "double clicking the row fills the input box" ((Wait-EditText ([VaultUiTest]::FindDescendant($dlg,120)) "Secret123") -eq "Secret123")
+Check "double clicking the row fills the input box" ((Test-PasswordBox $dlg)
 
 # Edit: opens the entry for changing it
 $lst = Open-List ([uint32]$p.Id) $btnList $T.List "the window can be reopened"
@@ -1112,7 +1096,7 @@ New-VaultEntry ([uint32]$p.Id) $dlg "abc" "PwForAbc" "new-password dialog appear
 # now type the saved name into the password box -> AutoTypeByName should replace it
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "abc")
 Start-Sleep -Seconds 1
-Check "typing a saved name auto-fills its password" ([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($dlg,120)) -eq "PwForAbc")
+Check "typing a saved name auto-fills its password" (Test-PasswordBox $dlg)
 Check "process alive" (-not $p.HasExited)
 Stop-Fm $p
 
@@ -1148,7 +1132,7 @@ $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (unnam
 # generated name can ever collide with a password the user types.
 New-VaultEntry ([uint32]$p.Id) $dlg "" "AutoNamed" "new-password dialog appears"
 # (creation of "" / "AutoNamed" is done by New-VaultEntry below)
-Check "unnamed entry still fills the input box" ([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($dlg,120)) -eq "AutoNamed")
+Check "unnamed entry still fills the input box" (Test-PasswordBox $dlg)
 
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "")
 Start-Sleep -Milliseconds 200
@@ -1175,7 +1159,7 @@ $pwEdit = [VaultUiTest]::FindDescendant($dlg,120)
 Start-Sleep -Milliseconds 200
 Select-Row $lv 0   # Fill row 0
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))
-Check "row 0 still has the first password" ((Wait-EditText $pwEdit "AutoNamed") -eq "AutoNamed") "(edit=[$([VaultUiTest]::GetEditText($pwEdit))])"
+Check "row 0 still has the first password" (Test-PasswordBox $dlg) "(edit=[$([VaultUiTest]::GetEditText($pwEdit))])"
 $lst = Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg, 3808)) $T.List "the list window reopens to fill the second entry"
 $lv = Wait-Child $lst 124
 [VaultUiTest]::SetEditText($pwEdit, "")
@@ -1183,7 +1167,7 @@ Start-Sleep -Milliseconds 200
 [void](Wait-Rows $lv 2 5)                                 # rows must exist before clicking one
 Select-Row $lv 1
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))
-Check "row 1 still has the second password" ((Wait-EditText $pwEdit "SecondUnnamed") -eq "SecondUnnamed") "(edit=[$([VaultUiTest]::GetEditText($pwEdit))])"
+Check "row 1 still has the second password" (Test-PasswordBox $dlg) "(edit=[$([VaultUiTest]::GetEditText($pwEdit))])"
 Check "process alive after unnamed entries" (-not $p.HasExited)
 Stop-Fm $p
 
@@ -1202,7 +1186,7 @@ $lst = Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg, 3808)) $T.
 $lv = Wait-Child $lst 124
 Select-Row $lv 0   # Fill
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))
-Check "filling still works with the setting off" ((Wait-EditText ([VaultUiTest]::FindDescendant($dlg,120)) "PwStayOpen") -eq "PwStayOpen")
+Check "filling still works with the setting off" ((Test-PasswordBox $dlg)
 Check "the window stays open when the setting is off" ((Wait-Dialog ([uint32]$p.Id) $T.List 2) -ne [IntPtr]::Zero)
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3817))   # Close
 Start-Sleep -Seconds 1
@@ -1247,7 +1231,7 @@ Check "the password is hidden in the list" ([VaultUiTest]::GetListText($lv, 0, 1
 Start-Sleep -Milliseconds 200
 Select-Row $lv 0   # Fill (the window closes)
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))
-Check "clicking Fill on a masked row types the real password" ((Wait-EditText ([VaultUiTest]::FindDescendant($dlg,120)) "BrandNewPw") -eq "BrandNewPw")
+Check "clicking Fill on a masked row types the real password" ((Test-PasswordBox $dlg)
 # ... and the "show passwords" checkbox in the list window reveals it
 $lst = Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg, 3808)) $T.List "the list window reopens for revealing"
 $lv = Wait-Child $lst 124
@@ -1353,7 +1337,7 @@ if (-not (Test-Path $guiExe)) {
   # store a password from inside the compress dialog
   New-VaultEntry ([uint32]$g.Id) $cd "compress-entry" "PwForCompress" "new-password dialog opens from the compress dialog"
 # (creation of "compress-entry" / "PwForCompress" is done by New-VaultEntry below)
-  Check "the compress dialog got the new password" ((Wait-EditText ([VaultUiTest]::FindDescendant($cd,120)) "PwForCompress") -eq "PwForCompress")
+  Check "the compress dialog got the new password" ((Test-PasswordBox $cd)
   Check "the vault now holds the entry" (Wait-File $vault)
 
   # the saved-passwords window opened from the compress dialog fills it too
@@ -1366,7 +1350,7 @@ if (-not (Test-Path $guiExe)) {
   Check "the entry is listed" ([VaultUiTest]::GetListText($lv, 0, 0) -eq "compress-entry") "(row0=[$([VaultUiTest]::GetListText($lv, 0, 0))])"
   Select-Row $lv 0   # Fill
   [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))
-  Check "the password is typed into the compress dialog" ((Wait-EditText ([VaultUiTest]::FindDescendant($cd,120)) "PwForCompress") -eq "PwForCompress")
+  Check "the password is typed into the compress dialog" ((Test-PasswordBox $cd)
   # the second password field is kept in step, so the archive can be created
   Check "the reenter-password field was filled too" ((Wait-EditText ([VaultUiTest]::FindDescendant($cd,121)) "PwForCompress") -eq "PwForCompress")
   Check "the compress dialog process is still alive" (-not $g.HasExited)
@@ -1488,7 +1472,7 @@ $lv = Wait-Child $lst 124
 Check "the archive password is in the vault" ([VaultUiTest]::GetListText($lv, 0, 0) -eq "the-archive") "(row0=[$([VaultUiTest]::GetListText($lv, 0, 0))])"
 Select-Row $lv 0   # Fill (closes the window)
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))
-Check "the password landed in the extraction dialog" ((Wait-EditText ([VaultUiTest]::FindDescendant($gdlg,120)) "ArchivePw") -eq "ArchivePw")
+Check "the password landed in the extraction dialog" ((Test-PasswordBox $gdlg)
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($gdlg, 1))        # OK -> extract
 $deadline = (Get-Date).AddSeconds(20)
 while ((Get-Date) -lt $deadline -and -not $g.HasExited) { Start-Sleep -Milliseconds 200 }
@@ -1514,7 +1498,7 @@ $ed = Expect-Dialog ([uint32]$g.Id) $T.NewPassword "a password is stored from th
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "GuiMadePw")
 Start-Sleep -Milliseconds 250
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-Check "the compress dialog received the stored password" ((Wait-EditText ([VaultUiTest]::FindDescendant($cd,120)) "GuiMadePw") -eq "GuiMadePw")
+Check "the compress dialog received the stored password" ((Test-PasswordBox $cd)
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($cd, 1))          # OK -> create the archive
 $deadline = (Get-Date).AddSeconds(25)
 while ((Get-Date) -lt $deadline -and -not (Test-Path $madeArc)) { Start-Sleep -Milliseconds 200 }
@@ -1611,7 +1595,7 @@ Check "the entry survived the master-password round trip" ([VaultUiTest]::GetLis
 Check "the value is masked by default in master mode" ([VaultUiTest]::GetListText($lv, 0, 1) -eq $masked)
 Select-Row $lv 0
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))
-Check "filling works in master mode" ((Wait-EditText ([VaultUiTest]::FindDescendant($dlg,120)) "PwInMasterMode") -eq "PwInMasterMode")
+Check "filling works in master mode" ((Test-PasswordBox $dlg)
 Check "process alive after the master-password round trip" (-not $p.HasExited)
 Stop-Fm $p
 
@@ -1713,7 +1697,7 @@ Check "the named row is still masked with the setting on" ([VaultUiTest]::GetLis
 Start-Sleep -Milliseconds 200
 Select-Row $lv $rowUnnamed
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))
-Check "the revealed unnamed entry still fills" ((Wait-EditText ([VaultUiTest]::FindDescendant($dlg,120)) "PwUnnamed") -eq "PwUnnamed") "(edit=[$([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($dlg,120)))])"
+Check "the revealed unnamed entry still fills" ((Test-PasswordBox $dlg) "(edit=[$([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($dlg,120)))])"
 Check "process alive after revealing an unnamed password" (-not $p.HasExited)
 Stop-Fm $p
 
@@ -2124,7 +2108,7 @@ if ($row -ge 0) {
   Start-Sleep -Milliseconds 200
   Select-Row $lv $row
   [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))
-  Check "the password is filled from the vault in the folder" ((Wait-EditText $pwEdit "PwFolderTest") -eq "PwFolderTest") "(got [$([VaultUiTest]::GetEditText($pwEdit))])"
+  Check "the password is filled from the vault in the folder" (Test-PasswordBox $dlg) "(got [$([VaultUiTest]::GetEditText($pwEdit))])"
 } else {
   [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3817))
 }
@@ -2201,6 +2185,69 @@ if ((Test-Path $vault) -and (Get-Item $vault).Length -gt 16) {
   Check "process alive after the damaged vault test" (-not $p.HasExited)
   Stop-Fm $p
 }
+# ---------------------------------------------------------------- test 24
+Write-Host "`n== 24. what a fill really delivers ==" -ForegroundColor Cyan
+# A Windows password box cannot be read from another process, so the value is verified
+# through the two channels that do work: the saved-passwords list (a normal list control)
+# and a real archive that only opens with the right password.
+Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $regKey -Name "VaultPath" -Value $vault -Type String
+Set-ItemProperty -Path $regKey -Name "UseMasterPassword" -Value 0 -Type DWord
+Set-ItemProperty -Path $regKey -Name "ShowPasswordInList" -Value 0 -Type DWord
+Set-ItemProperty -Path $regKey -Name "CloseAfterFill" -Value 1 -Type DWord
+
+$proofArc = Join-Path $workDir "fill-proof.7z"
+$proofDest = Join-Path $workDir "out_fill_proof"
+$proofPw = "ProofPw-42"
+Remove-Item $proofArc -Force -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force $proofDest -ErrorAction SilentlyContinue
+& $szExe a -t7z -mhe -p"$proofPw" $proofArc $plain | Out-Null
+Check "an archive protected with the proof password exists" (Test-Path $proofArc)
+& $szExe t -p"$proofPw" $proofArc | Out-Null
+Check "the proof password really opens it" ($LASTEXITCODE -eq 0)
+
+$p = Start-Fm $archive
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (proof)"
+New-VaultEntry ([uint32]$p.Id) $dlg "proof-entry" $proofPw "the proof entry is stored"
+$lst = Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg, 3808)) $T.List "the list opens (proof)"
+$lv = Wait-Child $lst 124
+$row = Find-Row $lv "proof-entry"
+Check "the entry is listed" ($row -ge 0)
+Check "the password column is masked before revealing" ([VaultUiTest]::GetListText($lv, $row, 1) -eq $masked) "(got [$([VaultUiTest]::GetListText($lv, $row, 1))])"
+# the list is a normal control: reveal it and the real value can be read back
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3829))     # Show passwords
+Start-Sleep -Milliseconds 600
+Check "the stored password can be read from the list" ([VaultUiTest]::GetListText($lv, $row, 1) -eq $proofPw) "(got [$([VaultUiTest]::GetListText($lv, $row, 1))])"
+Check "the password box of the dialog is a password box" (Test-PasswordBox $dlg)
+Select-Row $lv $row
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))     # Fill
+Check "filling closes the list window (the observable of a fill)" (Wait-NoDialog ([uint32]$p.Id) $T.List 5)
+Check "process alive after filling" (-not $p.HasExited)
+Stop-Fm $p
+
+# and the value that was filled really is that password: it opens the proof archive
+$g = Start-Process -FilePath $guiExe -ArgumentList @("x", "-y", "-o`"$proofDest`"", "`"$proofArc`"") -PassThru
+$gdlg = Expect-Dialog ([uint32]$g.Id) $T.Password "7zG asks for the proof password" 15
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($gdlg, 3808))    # saved passwords
+$lst = Expect-Dialog ([uint32]$g.Id) $T.List "the vault window opens for the proof archive"
+$lv = Wait-Child $lst 124
+$row = Find-Row $lv "proof-entry"
+Check "the proof entry is offered to 7zG" ($row -ge 0)
+if ($row -ge 0) {
+  Select-Row $lv $row
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))   # Fill
+}
+Check "the password box of the extraction dialog is a password box" (Test-PasswordBox $gdlg)
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($gdlg, 1))       # OK -> extract
+$deadline = (Get-Date).AddSeconds(20)
+while ((Get-Date) -lt $deadline -and -not $g.HasExited) { Start-Sleep -Milliseconds 200 }
+$out = Join-Path $proofDest "hello.txt"
+Check "the archive opened: the filled password was the right one" (Test-Path $out) "(looked for $out)"
+if (Test-Path $out) {
+  Check "the extracted content is right" (((Get-Content $out -Raw).Trim()) -eq "secret content")
+}
+Check "7zG finished (proof)" ($g.HasExited)
+if (-not $g.HasExited) { Stop-Process -Id $g.Id -Force }
 } finally {
   Stop-Fm $null
   Set-VaultSettings $savedSettings
