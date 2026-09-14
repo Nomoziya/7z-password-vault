@@ -22,8 +22,9 @@
 上传后立即记录 `sha256` 与首轮结果；探针文件（`vt-attrib`）绝不与发布产物同名或混放。
 
 **当前结果**（2026-09-14，详见 `docs/vt-attribution.md` 与 `docs/vt-false-positive-report.md`）：
-改造前 7 个检出 → 改造后 **4 个**；`portable.zip` **0/68 全清**；两个 exe 各剩 1 个微软 ML 判定；
-`setup.exe` 剩 Elastic + CrowdStrike，两者都来自「自解压壳」形态本身（归属实验 A3 已证明）。
+公开发布只有便携版 zip，**发布集合 3 个文件合计 1 个检出**——`portable.zip` 0/67、`7zG.exe` 0/65、
+`7zFM.exe` 1/69（微软 `Wacatac.B!ml`，ML 判定）。改造前是 7 个检出；自解压 `setup.exe` 已停发，
+它带来的 Elastic 与 CrowdStrike 两个检测随外壳一起消失。
 
 ## 2. 安装 / 卸载端到端验收 / INS cases
 

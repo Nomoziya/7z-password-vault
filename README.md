@@ -56,8 +56,16 @@ Two builds are published for every release:
 
 | Build | What it is |
 |-------|------------|
-| `7z-password-vault-<version>-win64-setup.exe` | **Self-extracting package** (not an installer in the technical sense: the 7-Zip SFX stub cannot run a program after unpacking — that was measured, so nothing pretends otherwise). It asks for a folder, unpacks the package there and exits. On the **first start** the program itself asks whether it should create the Start Menu / desktop shortcuts and register an entry in *Apps & features* — current user only, no administrator rights, and "No" leaves everything working. The same can be done later by running `install.cmd` in the program folder; uninstall with `uninstall.cmd` or from *Apps & features*. |
-| `7z-password-vault-<version>-win64-portable.zip` | **Portable.** Unpack anywhere and run `7zFM.exe`. Nothing is written outside that folder except 7-Zip's own per-user settings in `HKCU\Software\7-Zip`. The shortcut question is offered here as well and can simply be answered with "No". |
+| `7z-password-vault-<version>-win64-portable.zip` | **The download.** Unpack anywhere and run `7zFM.exe`. Nothing is written outside that folder except 7-Zip's own per-user settings in `HKCU\Software\7-Zip`, plus what you agree to on the first start (see below). |
+| `install.cmd` (inside the zip) | Optional manual entry point: creates the Start Menu / desktop shortcuts and the entry in *Apps & features* right away. The program offers the same thing itself on its **first start**, after asking — current user only, no administrator rights, and "No" leaves everything working. |
+| `uninstall.cmd` (inside the zip) | Removes the shortcuts, the *Apps & features* entry, the associations that point into this folder and the folder itself; it asks first whether the vault file should be kept. |
+
+Why there is no `setup.exe` any more: the 7-Zip SFX stub cannot run a program after unpacking
+(measured — it ignores its configuration), so a self-extracting download looked like an
+installer while only being an unpacker, and VirusTotal engines score that wrapper shape
+(Elastic and CrowdStrike flagged it even though the payload alone is clean — see
+`docs/vt-attribution.md`). The zip plus the program's own first-start question does the same
+job without the detections.
 
 After installing, associations and file icons are one step away: **Tools → Options →
 System**, tick `7z`, `zip`, … and press OK. A portable copy is not associated with
@@ -243,8 +251,13 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 
 | 包 | 说明 |
 |----|------|
-| `7z-password-vault-<版本>-win64-setup.exe` | **自解压包**（严格说不是安装器：7-Zip 的 SFX 存根**不能**在解包后执行程序，这是实测结论，所以这里不做任何假装）。它只做两件事：问你解包到哪个文件夹、解包完退出。快捷方式与「应用和功能」登记由**程序自己**在**首次启动**时询问后完成 —— 只写当前用户、不需要管理员权限，选「否」也照常使用。想立刻做也可以之后手动运行程序目录里的 `install.cmd`；卸载用 `uninstall.cmd` 或从「应用和功能」里点。 |
-| `7z-password-vault-<版本>-win64-portable.zip` | **便携版**：解压到任意位置直接运行 `7zFM.exe`。除了 7-Zip 自己的每用户设置（`HKCU\Software\7-Zip`）之外，不往目录外写任何东西。首次启动同样会问一次是否创建快捷方式，选「否」即可。 |
+| `7z-password-vault-<版本>-win64-portable.zip` | **唯一发布的下载**：解压到任意位置直接运行 `7zFM.exe`。除了 7-Zip 自己的每用户设置（`HKCU\Software\7-Zip`）与你在首次启动时同意的内容之外，不往目录外写任何东西。 |
+| `install.cmd`（在压缩包里） | 可选的手动入口：立刻创建开始菜单 / 桌面快捷方式与「应用和功能」登记项。程序**首次启动**时自己也会问一次同样的事 —— 只写当前用户、不需要管理员权限，选「否」也照常使用。 |
+| `uninstall.cmd`（在压缩包里） | 删除快捷方式、指向本目录的关联、「应用和功能」登记项和整个目录；删除前会先问是否保留密码库。 |
+
+为什么不再有 `setup.exe`：7-Zip 的 SFX 存根**不能**在解包后执行程序（实测：它不解析配置），所以自解压包
+看起来像安装器、实际只是解包器，而杀毒引擎会为这种外壳形态扣分（Elastic 与 CrowdStrike 即使面对干净载荷
+也会打标，见 `docs/vt-attribution.md`）。改用 zip + 程序首启询问，功能一样而不带这些检测。
 
 安装完成后，关联与文件图标只差一步：**工具 → 选项 → 系统**，勾选 `7z`、`zip` 等，
 确定即可。便携版默认不会关联任何格式 —— 以前那是官方安装程序做的事。

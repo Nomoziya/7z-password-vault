@@ -21,25 +21,34 @@
   `check-labels.ps1` 用 `$null` 判断还原，且运行期间的临时密码库位置/首启标记都会被还原。
 
 ### 变更 / Changed
+- **只发布便携版 zip**：不再发布自解压 `setup.exe`。原因不是省事，而是归属实验（`docs/vt-attribution.md`）
+  显示自解压外壳本身就是检测来源：把 `setup.exe` 拆开单独提交时，配置文本 0/69、载荷归档 0/63、
+  官方存根 0/71，而「外壳 + 载荷」即使换成未被打标的官方程序仍是 2/70。去掉外壳后，
+  **Elastic 与 CrowdStrike 的那两个检测直接消失**，功能没有损失：快捷方式与「应用和功能」登记
+  由程序首次启动时询问后完成，`install.cmd` 仍在压缩包里作为手动入口。
+  `installer\build.ps1` 只有在显式加 `-WithSetup` 时才构建自解压包。
+- `install.cmd` / `install.ps1` 现在**随便携包一起发布**（以前只在自解压载荷里），
+  包内哈希清单覆盖全部 113 个文件（此前 114 个文件只列 111 条）。
+- 「应用和功能」里的版本号统一为 `26.03`（与程序内显示一致），不再与发布号分叉。
 - **二进制身份改为诚实身份**：`CompanyName=Nomoziya`、`ProductName=7-Zip Password Vault`、
   版权写明「基于 7-Zip 26.03（Igor Pavlov，LGPL）的修改版」。未签名却声称官方公司/产品正是冒充类特征。
 - **构建可复现**：GNU ld 会把链接时间写进 PE 头（实测这是唯一的不确定来源），现在链接时加
   `-Wl,--no-insert-timestamp`，**连续两次重新链接产出完全相同的哈希**（已验证）。
 - manifest 增加 `<requestedExecutionLevel level="asInvoker"/>`：程序从不需要管理员权限。
-- 「应用和功能」里的版本号统一为 `26.03`（与程序内显示一致），不再与发布号分叉。
 
 ### VirusTotal 实测 / Measured on VirusTotal (2026-09-14)
 
 | 文件 | 改造前 | 改造后 |
 |------|--------|--------|
-| `portable.zip` | 1/67（Elastic） | **0/68** ✅ 全清 |
-| `setup.exe` | 3/70（Microsoft `Wacatac.C!ml`、Elastic、CrowdStrike） | **2/70**（Microsoft 消失） |
-| `7zFM.exe` | 2/70（Microsoft、Elastic） | **1/69**（Elastic 消失） |
-| `7zG.exe` | 1/70（Microsoft `C!ml`） | **1/70**（`B!ml`） |
+| `portable.zip`（唯一发布的下载） | 1/67（Elastic） | **0/67** ✅ 全清 |
+| `setup.exe`（不再发布） | 3/70（Microsoft `Wacatac.C!ml`、Elastic、CrowdStrike） | — 已停发，那两个检测随外壳一起消失 |
+| `7zFM.exe` | 2/70（Microsoft、Elastic） | **1/69**（只剩微软 ML） |
+| `7zG.exe` | 1/70（Microsoft `C!ml`） | **0/65** ✅ 全清 |
 
-合计 **7 → 4**。归属实验（哪一层造成检测）见 `docs/vt-attribution.md`：把 `setup.exe` 拆开单独提交后，
-**配置文本 0/69、载荷归档 0/63、官方存根 0/71**，而「自解压壳 + 载荷」即使换成未被打标的官方程序仍是 2/70
-—— 也就是说自解压壳形态本身就是原因，两个重建的 exe 再贡献约 1 个。
+**发布集合只有 3 个文件，合计 1 个检出**（`7zFM.exe` 的微软 ML 判定），从改造前的 7 个降到 1 个。
+归属实验（哪一层造成检测）见 `docs/vt-attribution.md`：把 `setup.exe` 拆开单独提交后，配置文本 0/69、
+载荷归档 0/63、官方存根 0/71，而「自解压壳 + 载荷」即使换成未被打标的官方程序仍是 2/70 —— 也就是说自解压壳
+形态本身就是原因，两个重建的 exe 再贡献约 1 个。剩下那 1 个的持久解法是代码签名（每次重建后也可先提交微软误报）。
 
 剩下的检测与处置：两个重建 exe 的微软 ML 判定需要**每次构建重新提交误报**（
 <https://www.microsoft.com/en-us/wdsi/filesubmission>，Software developer 路径）+ 长期靠**代码签名**

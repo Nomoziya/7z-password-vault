@@ -21,7 +21,12 @@ $copies = @(
   @{ src = "README.md";                             dst = "README.md" },
   @{ src = "BUILD.md";                              dst = "BUILD.md" },
   @{ src = "tools\uninstall.ps1";                   dst = "uninstall.ps1" },
-  @{ src = "tools\uninstall.cmd";                   dst = "uninstall.cmd" }
+  @{ src = "tools\uninstall.cmd";                   dst = "uninstall.cmd" },
+  # The portable package is the only published download now, so the manual entry point for
+  # the shortcuts / "Apps & features" registration travels with it (the program also offers
+  # the same thing on its first start).
+  @{ src = "installer\install.cmd";                 dst = "install.cmd" },
+  @{ src = "installer\install.ps1";                 dst = "install.ps1" }
 )
 foreach ($c in $copies) {
   $from = Join-Path $root $c.src
