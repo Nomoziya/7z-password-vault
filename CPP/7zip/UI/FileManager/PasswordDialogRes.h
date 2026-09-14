@@ -100,3 +100,6 @@
 
 /* the file was replaced by another window after it had been read */
 #define IDT_PASSWORD_ERR_CHANGED        3863
+
+/* the location cannot be changed while the current vault is unreadable */
+#define IDT_PASSWORD_PATH_NEEDS_VAULT   3864

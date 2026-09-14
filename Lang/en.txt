@@ -461,6 +461,8 @@ The vault file was moved next to the program:\n\n{0}
 Cannot open the vault file:\n{0}\n{1}\n\nIf the file is damaged and you have a backup, rename or delete it and try again.
 3863
 The vault was changed by another window. Open it again:\n{0}
+3864
+The current vault cannot be read, so the location was not changed.\n\nMake sure the old file can be opened (or rename it) and then change the location.
 3900
 Elapsed time:
 Remaining time:

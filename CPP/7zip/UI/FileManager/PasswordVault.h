@@ -36,6 +36,10 @@ class CPasswordVault
      Saving in that state would write the empty list in memory over the real file, so
      Save() refuses until a Load() succeeded. */
   bool _readFailed = false;
+  /* Whether this object ever read a file: decides where the mode comes from and whether
+     the file may be replaced. */
+  bool _haveLoadedMode = false;
+  bool _loadedExisted = false;
   /* Size and write time of the file as it was read, to notice that another process
      (7zFM and 7zG can both save) replaced it in the meantime. */
   unsigned long long _loadedSize = 0;
@@ -57,6 +61,7 @@ public:
   CObjectVector<CPasswordVaultEntry> &Entries() { return _entries; }
   const CObjectVector<CPasswordVaultEntry> &Entries() const { return _entries; }
 
+  static bool settings_DefaultMaster();
   static UString GetDefaultPath();
   static UString GetConfiguredPath();
 
@@ -71,7 +76,8 @@ public:
   /* parent is used only when the master password has to be asked for again
      (the "remember" setting is off); it must be a window of the calling dialog,
      otherwise the prompt would appear unowned and can end up behind it. */
-  bool Save(UString &errorMessage, HWND parent = NULL);
+  /* modeOverride: -1 keep (the file decides), 0 DPAPI, 1 master password. */
+  bool Save(UString &errorMessage, HWND parent = NULL, int modeOverride = -1);
 
   int FindByName(const UString &name) const;
 

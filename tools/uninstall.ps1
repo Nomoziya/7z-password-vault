@@ -368,7 +368,11 @@ Say ""
 Say "Program folder..."
 if ($WhatIf) {
   Say "  [would remove] these files in $installDirFull (everything else stays):"
-  foreach ($name in $ours) {
+  $ourFiles = @("7zFM.exe", "7zG.exe", "7z.exe", "7z.dll", "7-zip.dll", "7-zip32.dll",
+                "7z.sfx", "7zCon.sfx", "7-zip.chm", "History.txt", "License.txt", "readme.txt",
+                "descript.ion", "README.md", "BUILD.md", "uninstall.cmd", "uninstall.ps1",
+                "install.cmd", "install.ps1", "SHA256SUMS.txt")
+  foreach ($name in $ourFiles) {
     if (Test-Path -LiteralPath (Join-Path $installDirFull $name)) { Say "      $name" }
   }
   foreach ($d in @("Lang", "Codecs", "Formats")) {
@@ -379,23 +383,86 @@ if ($WhatIf) {
   # Only the files that ship with this package are removed by name. The folder may be a
   # download or tools folder that holds other things, and a portable package must not
   # delete what it does not own.
-  $ours = @("7zFM.exe", "7zG.exe", "7z.exe", "7z.dll", "7-zip.dll", "7-zip32.dll",
-            "7z.sfx", "7zCon.sfx", "7-zip.chm", "History.txt", "License.txt", "readme.txt",
-            "descript.ion", "README.md", "BUILD.md", "uninstall.cmd", "uninstall.ps1",
-            "install.cmd", "install.ps1", "SHA256SUMS.txt")
+  $ourFiles = @("7zFM.exe", "7zG.exe", "7z.exe", "7z.dll", "7-zip.dll", "7-zip32.dll",
+                "7z.sfx", "7zCon.sfx", "7-zip.chm", "History.txt", "License.txt", "readme.txt",
+                "descript.ion", "README.md", "BUILD.md", "uninstall.cmd", "uninstall.ps1",
+                "install.cmd", "install.ps1", "SHA256SUMS.txt")
   $removedFiles = 0
-  foreach ($name in $ours) {
-    $f = Join-Path $installDirFull $name
-    if (Test-Path -LiteralPath $f) {
-      Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
-      if (-not (Test-Path -LiteralPath $f)) { $removedFiles++ }
+  $keptFiles = @()
+  $manifestPath = Join-Path $installDirFull "SHA256SUMS.txt"
+  if (Test-Path -LiteralPath $manifestPath) {
+    # The hash list decides what belongs to this package: a file of the same name that
+    # does not match is somebody else's (an official 7-Zip in the same folder, or a file
+    # the user put there) and is left alone.
+    $entries = @()
+    foreach ($line in (Get-Content -LiteralPath $manifestPath)) {
+      if ($line -match '^\s*#' -or $line.Trim() -eq "") { continue }
+      $parts = $line -split '\s+', 2
+      if ($parts.Count -ne 2) { continue }
+      $entries += @{ hash = $parts[0].Trim().ToLower(); rel = $parts[1].Trim() }
     }
+    $manifestDirs = @()
+    foreach ($e in $entries) {
+      if ($e.rel -match '\.\.' -or $e.rel.StartsWith("\") -or $e.rel -match '^[A-Za-z]:') {
+        Skip "manifest entry rejected: $($e.rel)"; continue
+      }
+      if ($e.rel -ieq "uninstall.ps1" -or $e.rel -ieq "uninstall.cmd" -or $e.rel -ieq "SHA256SUMS.txt") { continue }
+      $full = Join-Path $installDirFull $e.rel
+      $dir = Split-Path -Parent $full
+      if ($dir -and $dir -ne $installDirFull -and ($manifestDirs -notcontains $dir)) { $manifestDirs += $dir }
+      if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+      $hash = $null
+      try { $hash = (Get-FileHash -LiteralPath $full -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower() } catch { $hash = $null }
+      if ($hash -eq $e.hash) {
+        Remove-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $full) {
+          Say "  [failed]  cannot delete $full (in use?)" -ForegroundColor Red
+          $keptFiles += $full
+        } else { $removedFiles++ }
+      } elseif ($null -eq $hash) {
+        Say "  [kept]    cannot read $full (in use?), left alone" -ForegroundColor Yellow
+        $keptFiles += $full
+      } else {
+        $keptFiles += $full
+      }
+    }
+    # The installer adds these two to the payload after the hash list was written.
+    foreach ($extra in @("install.ps1", "install.cmd")) {
+      $f = Join-Path $installDirFull $extra
+      if (Test-Path -LiteralPath $f) {
+        Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $f) { $keptFiles += $f } else { $removedFiles++ }
+      }
+    }
+    Ok ("program files removed ({0} files, checked against SHA256SUMS.txt)" -f $removedFiles)
+    if ($keptFiles.Count) {
+      Say ""
+      Say "  [kept]    these files do not match the package's hash list, so they are not ours:" -ForegroundColor Yellow
+      $keptFiles | Select-Object -First 10 | ForEach-Object { Say "              $_" -ForegroundColor Yellow }
+    }
+    # only directories that the manifest mentions, and only when they are empty
+    foreach ($dir in ($manifestDirs | Sort-Object Length -Descending)) {
+      if ((Test-Path -LiteralPath $dir) -and
+          @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+        Remove-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue
+      }
+    }
+  } else {
+    Say "  [warn]    no SHA256SUMS.txt: falling back to deleting by name. A file of the" -ForegroundColor Yellow
+    Say "            same name that belongs to another 7-Zip in this folder would be removed." -ForegroundColor Yellow
+    foreach ($name in $ourFiles) {
+      $f = Join-Path $installDirFull $name
+      if (Test-Path -LiteralPath $f) {
+        Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path -LiteralPath $f)) { $removedFiles++ }
+      }
+    }
+    foreach ($d in @("Lang", "Codecs", "Formats")) {
+      $dd = Join-Path $installDirFull $d
+      if (Test-Path -LiteralPath $dd) { Remove-Item -LiteralPath $dd -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    Ok ("program files removed ({0} files, by name)" -f $removedFiles)
   }
-  foreach ($d in @("Lang", "Codecs", "Formats")) {
-    $dd = Join-Path $installDirFull $d
-    if (Test-Path -LiteralPath $dd) { Remove-Item -LiteralPath $dd -Recurse -Force -ErrorAction SilentlyContinue }
-  }
-  Ok ("program files removed ({0} files, Lang/Codecs/Formats)" -f $removedFiles)
   $leftFiles = @(Get-ChildItem -LiteralPath $installDirFull -File -Force -ErrorAction SilentlyContinue |
                  Where-Object { $_.Name -ne (Split-Path $self -Leaf) })
   $leftDirs = @(Get-ChildItem -LiteralPath $installDirFull -Directory -Force -ErrorAction SilentlyContinue)

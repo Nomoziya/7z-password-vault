@@ -230,7 +230,26 @@ public class VaultUiTest {
     EnumChildWindows(parent, (h,l) => { if (GetDlgCtrlID(h) == id) { r = h; return false; } return true; }, IntPtr.Zero);
     return r;
   }
-  public static string GetEditText(IntPtr h) { var sb = new StringBuilder(512); SendBuf(h, 0x000D, (IntPtr)512, sb); return sb.ToString(); }
+  /* Windows answers WM_GETTEXT with an empty string when the control is a password box
+     (ES_PASSWORD) and the caller is another process - a deliberate protection, and the
+     reason the vault tests used to "see" an empty password box. Removing the password
+     character for the read is what the dialog's own "Show password" checkbox does, so
+     the value can be read and the check stays a real one. */
+  public static string GetEditText(IntPtr h) {
+    long style = GetWindowLongW(h, -16 /*GWL_STYLE*/);
+    bool wasPassword = ((style & 0x20 /*ES_PASSWORD*/) != 0);
+    long oldChar = 0;
+    if (wasPassword) {
+      /* Remember what the dialog itself used ('*' for 7-Zip) and put it back afterwards,
+         so the control is left exactly as it was found. */
+      oldChar = (long)Send(h, 0x00D2 /*EM_GETPASSWORDCHAR*/, IntPtr.Zero, IntPtr.Zero);
+      Send(h, 0x00CC /*EM_SETPASSWORDCHAR*/, IntPtr.Zero, IntPtr.Zero);
+    }
+    var sb = new StringBuilder(512);
+    SendBuf(h, 0x000D, (IntPtr)512, sb);
+    if (wasPassword) Send(h, 0x00CC, (IntPtr)oldChar, IntPtr.Zero);
+    return sb.ToString();
+  }
   public static void SetEditText(IntPtr h, string s) { SendStr(h, 0x000C, IntPtr.Zero, s); }
   public static void ClickButton(IntPtr h) { PostMessageW(h, 0x00F5, IntPtr.Zero, IntPtr.Zero); }
 
@@ -919,6 +938,11 @@ Write-Host ("  UI language: {0}{1}" -f $UiLang, $(if ($script:restoreLang) { " (
 function New-VaultEntry([uint32]$procId, [IntPtr]$dlg, [string]$name, [string]$password, [string]$checkName) {
   [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))     # new password
   $ed = Expect-Dialog $procId $T.NewPassword $checkName
+  if ($ed -eq [IntPtr]::Zero) {
+    # No name window: the caller is told and this function stops here. Sending a message
+    # to a null handle would abort the whole run instead of failing one check.
+    return [IntPtr]::Zero
+  }
   [VaultUiTest]::SetEditText((Wait-Child $ed 121 5), $name)
   [VaultUiTest]::SetEditText((Wait-Child $ed 122 5), $password)
   Start-Sleep -Milliseconds 300
@@ -2114,6 +2138,69 @@ Remove-Item $elsewhere,"$elsewhere.tmp" -Force -ErrorAction SilentlyContinue
   $beforeHash = if ($script:realVaultExisted) { (Get-FileHash -LiteralPath $realVaultBackup -Algorithm SHA256).Hash } else { "" }
   $afterHash = if (Test-Path -LiteralPath $realVaultEarly) { (Get-FileHash -LiteralPath $realVaultEarly -Algorithm SHA256).Hash } else { "" }
   Check "the real vault file was not modified" ($beforeHash -eq $afterHash)
+# ---------------------------------------------------------------- test 22
+Write-Host "`n== 22. saving twice in one dialog keeps working ==" -ForegroundColor Cyan
+# The vault remembers the size and write time of the file it read and refuses to replace
+# a file that changed since - it must therefore refresh that state after its own save,
+# otherwise the second save of the same dialog reports a conflict.
+Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $regKey -Name "VaultPath" -Value $vault -Type String
+Set-ItemProperty -Path $regKey -Name "UseMasterPassword" -Value 0 -Type DWord
+Set-ItemProperty -Path $regKey -Name "RememberMasterPassword" -Value 0 -Type DWord
+$p = Start-Fm $archive
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (two saves)"
+New-VaultEntry ([uint32]$p.Id) $dlg "twice-one" "PwTwiceOne" "the first entry is stored"
+Check "the vault was written by the first save" (Wait-File $vault)
+New-VaultEntry ([uint32]$p.Id) $dlg "twice-two" "PwTwiceTwo" "the second entry is stored in the same dialog"
+Check "no conflict is reported for the second save" ([VaultUiTest]::FindDialog([uint32]$p.Id, $T.Caption) -eq [IntPtr]::Zero)
+Check "the dialog is still alive after two saves" (-not $p.HasExited)
+$lst = Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg, 3808)) $T.List "the list opens after two saves"
+$lv = Wait-Child $lst 124
+Check "both entries are in the vault" ((Wait-Rows $lv 2) -eq 2) "(rows=$([VaultUiTest]::SendLong($lv, 0x1004, [IntPtr]::Zero, [IntPtr]::Zero)))"
+Check "the first entry survived the second save" ((Find-Row $lv "twice-one") -ge 0)
+Check "the second entry is there" ((Find-Row $lv "twice-two") -ge 0)
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3817))
+Check "process alive after two saves" (-not $p.HasExited)
+Stop-Fm $p
+
+# ---------------------------------------------------------------- test 23
+Write-Host "`n== 23. a vault that cannot be read is never overwritten ==" -ForegroundColor Cyan
+# A file with a valid header and a truncated body: it exists, it opens, reading it fails.
+# Saving in that state would replace it with the empty list in memory, so the program has
+# to refuse - and the file must be byte for byte what it was.
+Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
+$p = Start-Fm $archive
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (damaged vault)"
+New-VaultEntry ([uint32]$p.Id) $dlg "damaged-base" "PwDamagedBase" "an entry is stored before the file is damaged"
+Stop-Fm $p
+Check "the vault exists before it is damaged" (Test-Path $vault)
+if ((Test-Path $vault) -and (Get-Item $vault).Length -gt 16) {
+  $bytes = [IO.File]::ReadAllBytes($vault)
+  $cut = $bytes[0..($bytes.Length - 9)]
+  [IO.File]::WriteAllBytes($vault, $cut)
+  Check "the vault file is damaged now (shorter than before)" ($cut.Length -lt $bytes.Length)
+  $damagedHash = (Get-FileHash -LiteralPath $vault -Algorithm SHA256).Hash
+
+  $p = Start-Fm $archive
+  # the vault cannot be read, so the password dialog reports it and offers no name window
+  $box = Wait-Dialog ([uint32]$p.Id) $T.Caption 10
+  Check "the damaged vault is reported when it is opened" ($box -ne [IntPtr]::Zero)
+  if ($box -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $box $T.Caption) }
+  $dlg = Wait-Dialog ([uint32]$p.Id) $T.Password 8
+  Check "the password dialog is still usable" ($dlg -ne [IntPtr]::Zero)
+  if ($dlg -ne [IntPtr]::Zero) {
+    # pressing "new password" must not open the name window: saving is refused
+    [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
+    $ed = Wait-Dialog ([uint32]$p.Id) $T.NewPassword 4
+    Check "no name window opens for an unreadable vault" ($ed -eq [IntPtr]::Zero)
+    $again = Wait-Dialog ([uint32]$p.Id) $T.Caption 4
+    Check "the refusal is reported" ($again -ne [IntPtr]::Zero)
+    if ($again -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $again $T.Caption) }
+  }
+  Check "the damaged file was not overwritten" ((Get-FileHash -LiteralPath $vault -Algorithm SHA256).Hash -eq $damagedHash)
+  Check "process alive after the damaged vault test" (-not $p.HasExited)
+  Stop-Fm $p
+}
 } finally {
   Stop-Fm $null
   Set-VaultSettings $savedSettings

@@ -587,6 +587,8 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
   _readFailed = true;
   _loadedSize = 0;
   _loadedWriteTime = 0;
+  _haveLoadedMode = false;
+  _loadedExisted = false;
 
   CInFile f;
   if (!f.Open(_path))
@@ -635,6 +637,8 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
   if (ok)
   {
     _readFailed = false;
+    _haveLoadedMode = true;
+    _loadedExisted = true;
     RememberFileState();
   }
   return ok;
@@ -652,7 +656,7 @@ void CPasswordVault::RememberFileState()
       data.ftLastWriteTime.dwLowDateTime;
 }
 
-bool CPasswordVault::Save(UString &errorMessage, HWND parent)
+bool CPasswordVault::Save(UString &errorMessage, HWND parent, int modeOverride)
 {
   if (_readFailed)
   {
@@ -695,7 +699,12 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent)
     {
       NPasswordVault::CInfo settings;
       settings.Load();
-      const bool useMaster = settings.UseMasterPassword;
+      /* The mode belongs to the file: when this object read one, that file's mode is
+         kept. Only a new vault takes the setting as its default, and an explicit change
+         from the settings page overrides both. */
+      bool useMaster = _haveLoadedMode ? _masterMode : (settings.UseMasterPassword != 0);
+      if (modeOverride >= 0)
+        useMaster = (modeOverride != 0);
       const Byte flags = useMaster ? 1 : 0;
       ok = WriteBuf(f, &flags, 1);
       if (ok)
@@ -729,7 +738,7 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent)
       const unsigned long long size = ((unsigned long long)now.nFileSizeHigh << 32) | now.nFileSizeLow;
       const unsigned long long when = ((unsigned long long)now.ftLastWriteTime.dwHighDateTime << 32) |
           now.ftLastWriteTime.dwLowDateTime;
-      if ((size != _loadedSize || when != _loadedWriteTime) && (_loadedSize != 0 || _loadedWriteTime != 0))
+      if (size != _loadedSize || when != _loadedWriteTime)
       {
         SetPathError(errorMessage, IDT_PASSWORD_ERR_CHANGED,
             L"密码库已被另一个窗口修改，请重新打开：\n{0}", _path, 0);

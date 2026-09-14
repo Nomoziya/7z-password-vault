@@ -447,6 +447,18 @@ LONG CPasswordPage::OnApply()
     }
   }
 
+  if (!oldVaultReadable && pathChanged)
+  {
+    /* The old vault could not be read and the location changed: storing the new path
+       would point the program at a file that has never been written, while the real
+       passwords stay behind - and the next save would create an empty vault there.
+       Nothing is stored; the user can change the location once the old file is usable. */
+    ::MessageBoxW(*this, PasswordVault_GetText(IDT_PASSWORD_PATH_NEEDS_VAULT,
+        L"无法读取当前密码库，因此没有更改位置。\n\n请先确认旧文件可以打开（或把它改名后重试），再修改位置。"),
+        PasswordVault_GetCaption(), MB_ICONWARNING | MB_OK);
+    return PSNRET_INVALID_NOCHANGEPAGE;
+  }
+
   {
     NPasswordVault::CInfo settings;
     settings.Load();
