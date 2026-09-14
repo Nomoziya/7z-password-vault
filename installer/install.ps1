@@ -79,6 +79,9 @@ foreach ($k in $info.Keys) {
 # ran install.cmd would be asked about shortcuts that already exist.
 New-Item -Path "HKCU:\Software\7-Zip\PasswordVault" -Force | Out-Null
 Set-ItemProperty -Path "HKCU:\Software\7-Zip\PasswordVault" -Name "SetupAsked" -Value 1 -Type DWord
+# Where the shortcuts and the uninstall entry belong, so the program notices when the folder
+# is moved later and can offer to update them.
+Set-ItemProperty -Path "HKCU:\Software\7-Zip\PasswordVault" -Name "LastRegistered" -Value $InstallDir -Type String
 
 # ---------------------------------------------------------------- summary
 Say ""

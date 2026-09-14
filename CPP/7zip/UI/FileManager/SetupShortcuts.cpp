@@ -1,8 +1,7 @@
 // SetupShortcuts.cpp
 //
 // The convenient part of "installing" without an installer: a Start Menu shortcut, a desktop
-// shortcut and an entry in "Apps & features", created by the program itself on its first
-// start after asking the user.
+// shortcut and an entry in "Apps & features", created by the program itself.
 //
 // Why here and not in the package's install script: the self-extracting stub that ships with
 // 7-Zip (7z.sfx) cannot run a program after unpacking - measured, it ignores RunProgram and
@@ -12,6 +11,12 @@
 //
 // Everything is per-user: HKEY_CURRENT_USER only, no administrator rights, nothing that the
 // uninstaller has to run with elevation.
+//
+// Three entry points:
+//   SetupShortcuts_AskIfNeeded    - the first start of a fresh copy: ask once, remember
+//   SetupShortcuts_CheckLocation  - the folder changed since the registration: ask once per
+//                                   folder, after quietly removing a dead entry
+//   SetupShortcuts_Register       - do it now, no questions (the settings page button)
 
 #include "StdAfx.h"
 #include "SetupShortcuts.h"
@@ -32,6 +37,12 @@ static const wchar_t * const kKeyPath = L"Software\\7-Zip\\PasswordVault";
 /* Set once the question has been answered - yes or no. Its presence is what makes the
    question appear exactly once, so a "no" is remembered as well. */
 static const wchar_t * const kAskedValue = L"SetupAsked";
+/* The folder the shortcuts and the uninstall entry were registered for. When the program
+   runs from somewhere else, those entries point at the old place. */
+static const wchar_t * const kRegisteredValue = L"LastRegistered";
+/* The folder that was already asked about after such a move: asking once per folder keeps a
+   "no" from turning into a question on every start. */
+static const wchar_t * const kMovedAskedValue = L"MoveAsked";
 
 static const wchar_t * const kUninstallKeyPath =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\7ZipPasswordVault";
@@ -49,6 +60,13 @@ static const wchar_t * const kUninstallCmd = L"uninstall.cmd";
 
 static const unsigned kPathBufSize = 1024;
 
+static bool CaseInsensitiveEqual(const UString &a, const UString &b)
+{
+  if (a.Len() != b.Len())
+    return false;
+  return ::_wcsnicmp((const wchar_t *)a, (const wchar_t *)b, a.Len()) == 0;
+}
+
 static bool GetOwnFolder(UString &folder)
 {
   wchar_t buf[kPathBufSize];
@@ -65,6 +83,18 @@ static bool GetOwnFolder(UString &folder)
   return true;
 }
 
+static bool GetStringValue(const wchar_t *name, UString &value)
+{
+  NRegistry::CKey key;
+  if (key.Open(HKEY_CURRENT_USER, kKeyPath) != ERROR_SUCCESS)
+    return false;
+  CSysString text;
+  if (key.QueryValue(name, text) != ERROR_SUCCESS)
+    return false;
+  value = text;   /* CSysString is UString in a Unicode build */
+  return true;
+}
+
 static bool AlreadyAsked()
 {
   NRegistry::CKey key;
@@ -76,11 +106,11 @@ static bool AlreadyAsked()
   return value != 0;
 }
 
-static void MarkAsked()
+static void MarkAsked(const wchar_t *name)
 {
   NRegistry::CKey key;
   if (key.Create(HKEY_CURRENT_USER, kKeyPath) == ERROR_SUCCESS)
-    key.SetValue(kAskedValue, (UInt32)1);
+    key.SetValue(name, (UInt32)1);
 }
 
 static bool SetStringValue(const wchar_t *keyPath, const wchar_t *name, const UString &value)
@@ -99,6 +129,24 @@ static bool SetDwordValue(const wchar_t *keyPath, const wchar_t *name, UInt32 va
   return key.SetValue(name, value) == ERROR_SUCCESS;
 }
 
+static bool DeleteUninstallEntry()
+{
+  NRegistry::CKey key;
+  if (key.Open(HKEY_CURRENT_USER,
+      L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall") != ERROR_SUCCESS)
+    return false;
+  return key.DeleteSubKey(L"7ZipPasswordVault") == ERROR_SUCCESS;
+}
+
+static bool DeleteRegistryValue(const wchar_t *keyPath, const wchar_t *name)
+{
+  NRegistry::CKey key;
+  if (key.Open(HKEY_CURRENT_USER, keyPath) != ERROR_SUCCESS)
+    return false;
+  key.DeleteValue(name);
+  return true;
+}
+
 static bool GetKnownFolder(int csidl, UString &path)
 {
   wchar_t buf[kPathBufSize];
@@ -113,6 +161,11 @@ static void JoinPath(const UString &folder, const wchar_t *name, UString &res)
   res = folder;
   res.Add_PathSepar();
   res += name;
+}
+
+static bool FileOrFolderExists(const UString &path)
+{
+  return ::GetFileAttributesW((const wchar_t *)path) != INVALID_FILE_ATTRIBUTES;
 }
 
 /* A .lnk through IShellLink: no ShellExecute, no cmd.exe, nothing that starts an
@@ -135,47 +188,11 @@ static bool CreateShortcut(const UString &linkPath, const UString &target, const
   return file->Save(linkPath, TRUE) == S_OK;
 }
 
-void SetupShortcuts_AskIfNeeded(HWND parent)
+/* Creates the two shortcuts and the "Apps & features" entry for the folder the program runs
+   in now, removes a shortcut name collision at other places only by overwriting its own
+   name, and records the folder in LastRegistered so the location check can notice a move. */
+static bool RegisterForFolder(const UString &folder)
 {
-  if (AlreadyAsked())
-    return;
-
-  UString folder;
-  if (!GetOwnFolder(folder) || folder.IsEmpty())
-    return;
-
-  /* A copy started from a temporary folder is not an installation: a shortcut and an
-     uninstall entry for it would point at a folder Windows deletes. Those runs stay quiet,
-     and they do not answer the question either. */
-  {
-    wchar_t tempBuf[kPathBufSize];
-    const DWORD n = ::GetTempPathW(kPathBufSize, tempBuf);
-    if (n > 0 && n < kPathBufSize)
-    {
-      UString tempDir = tempBuf;
-      while (!tempDir.IsEmpty() && (tempDir.Back() == L'\\' || tempDir.Back() == L'/'))
-        tempDir.DeleteBack();
-      if (!tempDir.IsEmpty() && folder.Len() >= tempDir.Len() &&
-          ::_wcsnicmp((const wchar_t *)folder, (const wchar_t *)tempDir, tempDir.Len()) == 0)
-        return;
-    }
-  }
-
-  UString question = PasswordVault_GetText(IDT_PASSWORD_FIRST_RUN_Q,
-      L"要在开始菜单和桌面上创建快捷方式，并在「应用和功能」里登记卸载入口吗？\n\n"
-      L"只写入当前用户，不需要管理员权限；不创建也可以照常使用。");
-  question.Replace(UString(L"{0}"), folder);
-
-  const int answer = ::MessageBoxW(parent, question, PasswordVault_GetCaption(),
-      MB_ICONQUESTION | MB_YESNO);
-
-  /* Asked once, whatever the answer: a user who says no is not asked again on every start.
-     The settings page and install.cmd remain available for doing it later by hand. */
-  MarkAsked();
-
-  if (answer != IDYES)
-    return;
-
   UString exePath, cmdPath;
   JoinPath(folder, kFmExe, exePath);
   JoinPath(folder, kUninstallCmd, cmdPath);
@@ -245,6 +262,14 @@ void SetupShortcuts_AskIfNeeded(HWND parent)
       ok = false;
   }
 
+  /* The folder is recorded even when a step failed: the entry that was written points here,
+     so a later move has to be noticed from here. */
+  SetStringValue(kKeyPath, kRegisteredValue, folder);
+  return ok;
+}
+
+static void ShowResult(HWND parent, bool ok, const UString &folder)
+{
   UString message;
   if (ok)
   {
@@ -259,4 +284,108 @@ void SetupShortcuts_AskIfNeeded(HWND parent)
   }
   message.Replace(UString(L"{0}"), folder);
   ::MessageBoxW(parent, message, PasswordVault_GetCaption(), MB_ICONINFORMATION | MB_OK);
+}
+
+/* A copy started from a temporary folder is not an installation: a shortcut and an uninstall
+   entry for it would point at a folder Windows deletes. Those runs stay quiet, and they do not
+   answer the question either. */
+static bool RunningFromTempFolder(const UString &folder)
+{
+  wchar_t tempBuf[kPathBufSize];
+  const DWORD n = ::GetTempPathW(kPathBufSize, tempBuf);
+  if (n == 0 || n >= kPathBufSize)
+    return false;
+  UString tempDir = tempBuf;
+  while (!tempDir.IsEmpty() && (tempDir.Back() == L'\\' || tempDir.Back() == L'/'))
+    tempDir.DeleteBack();
+  if (tempDir.IsEmpty() || folder.Len() < tempDir.Len())
+    return false;
+  return ::_wcsnicmp((const wchar_t *)folder, (const wchar_t *)tempDir, tempDir.Len()) == 0;
+}
+
+bool SetupShortcuts_Register(HWND parent, bool showResult)
+{
+  UString folder;
+  if (!GetOwnFolder(folder) || folder.IsEmpty())
+    return false;
+  const bool ok = RegisterForFolder(folder);
+  if (showResult)
+    ShowResult(parent, ok, folder);
+  return ok;
+}
+
+void SetupShortcuts_AskIfNeeded(HWND parent)
+{
+  if (AlreadyAsked())
+    return;
+
+  UString folder;
+  if (!GetOwnFolder(folder) || folder.IsEmpty())
+    return;
+  if (RunningFromTempFolder(folder))
+    return;
+
+  UString question = PasswordVault_GetText(IDT_PASSWORD_FIRST_RUN_Q,
+      L"要在开始菜单和桌面上创建快捷方式，并在「应用和功能」里登记卸载入口吗？\n\n"
+      L"只写入当前用户，不需要管理员权限；不创建也可以照常使用。");
+  question.Replace(UString(L"{0}"), folder);
+
+  const int answer = ::MessageBoxW(parent, question, PasswordVault_GetCaption(),
+      MB_ICONQUESTION | MB_YESNO);
+
+  /* Asked once, whatever the answer: a user who says no is not asked again on every start.
+     The settings page has a button for doing it later by hand. */
+  MarkAsked(kAskedValue);
+
+  if (answer != IDYES)
+    return;
+
+  ShowResult(parent, RegisterForFolder(folder), folder);
+}
+
+void SetupShortcuts_CheckLocation(HWND parent)
+{
+  UString folder;
+  if (!GetOwnFolder(folder) || folder.IsEmpty())
+    return;
+  if (RunningFromTempFolder(folder))
+    return;
+
+  UString registered;
+  if (!GetStringValue(kRegisteredValue, registered) || registered.IsEmpty())
+    return;   /* nothing was ever registered, so nothing can point at the wrong place */
+
+  /* A dead entry (its folder is gone) is not a question: it is a broken reference that
+     Windows shows in "Apps & features" and that no user can use. It is removed quietly, and
+     the recorded folder with it, so the program can be registered again from where it is. */
+  if (!FileOrFolderExists(registered))
+  {
+    DeleteUninstallEntry();
+    DeleteRegistryValue(kKeyPath, kRegisteredValue);
+    return;
+  }
+
+  if (CaseInsensitiveEqual(registered, folder))
+    return;   /* the registration is about this folder */
+
+  /* The folder changed: the shortcuts and the uninstall entry still point at the old one.
+     Ask once per folder - a "no" must not turn into a question on every start. The value
+     holds the folder that was asked about, so it stays a string. */
+  UString alreadyAsked;
+  if (GetStringValue(kMovedAskedValue, alreadyAsked) && CaseInsensitiveEqual(alreadyAsked, folder))
+    return;
+  SetStringValue(kKeyPath, kMovedAskedValue, folder);
+
+  UString question = PasswordVault_GetText(IDT_PASSWORD_MOVED_ASK,
+      L"程序所在文件夹看起来变了：\n\n原来登记在：{0}\n现在运行在：{1}\n\n"
+      L"要把快捷方式与「应用和功能」里的卸载登记更新到当前位置吗？");
+  question.Replace(UString(L"{0}"), registered);
+  question.Replace(UString(L"{1}"), folder);
+
+  const int answer = ::MessageBoxW(parent, question, PasswordVault_GetCaption(),
+      MB_ICONQUESTION | MB_YESNO);
+  if (answer != IDYES)
+    return;
+
+  ShowResult(parent, RegisterForFolder(folder), folder);
 }

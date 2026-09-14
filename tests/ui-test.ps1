@@ -2465,6 +2465,82 @@ $again = Wait-Dialog ([uint32]$p.Id) $T.Caption 6
 Check "the question does not come back on the next start" ($again -eq [IntPtr]::Zero)
 Stop-Fm $p
 
+# ---------------------------------------------------------------- test 27
+Write-Host "`n== 27. the page button registers, and a moved folder is noticed ==" -ForegroundColor Cyan
+# The first-start question can be answered "no" or missed, so the settings page carries a button
+# that registers the shortcuts and the "Apps & features" entry for the folder the program runs
+# in. A portable copy that is moved keeps pointing at the old folder: the program notices that
+# from LastRegistered and asks once per folder.
+$deskShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "7-Zip Password Vault.lnk"
+$startShortcut = Join-Path (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs") "7-Zip Password Vault.lnk"
+$uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\7ZipPasswordVault"
+$fakeOldFolder = Join-Path $workDir "moved-away-from"
+
+if ((Test-Path -LiteralPath $deskShortcut) -or (Test-Path -LiteralPath $startShortcut) -or
+    (Test-Path -LiteralPath $uninstallKey)) {
+  Check "no shortcut / uninstall entry of the user is in the way" $false "(one is already there)"
+} else {
+  # ---- A: the settings page button does the registration
+  $p = Start-Fm ""
+  $page = Open-PasswordPage ([uint32]$p.Id) "the page opens for the setup button"
+  $btn = [VaultUiTest]::FindDescendant($page.Opt, 2616)
+  Check "the settings page has a 'create shortcuts / register' button" ($btn -ne [IntPtr]::Zero)
+  if ($btn -ne [IntPtr]::Zero) {
+    [VaultUiTest]::ClickButton($btn)
+    $result = Wait-Dialog ([uint32]$p.Id) $T.Caption 12
+    Check "the button reports what it did" ($result -ne [IntPtr]::Zero)
+    if ($result -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $result $T.Caption) }
+  }
+  $location = (Get-ItemProperty -Path $uninstallKey -Name "InstallLocation" -ErrorAction SilentlyContinue).InstallLocation
+  Check "the uninstall entry points at this folder" ($location -eq $SevenZipDir) "(got [$location])"
+  Check "the shortcuts were created (start menu)" (Test-Path -LiteralPath $startShortcut)
+  Check "the shortcuts were created (desktop)" (Test-Path -LiteralPath $deskShortcut)
+  $reg = (Get-ItemProperty -Path $regKey -Name "LastRegistered" -ErrorAction SilentlyContinue).LastRegistered
+  Check "the folder is recorded as registered" ($reg -eq $SevenZipDir) "(got [$reg])"
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($page.Opt, 2))   # Cancel
+  Start-Sleep -Milliseconds 600
+  Stop-Fm $p
+
+  # ---- B: the folder moved -> asked once, and "no" is remembered for that folder
+  Set-ItemProperty -Path $regKey -Name "LastRegistered" -Value $fakeOldFolder -Type String
+  Remove-ItemProperty -Path $regKey -Name "MoveAsked" -ErrorAction SilentlyContinue
+  $p = Start-Fm ""
+  $moved = Wait-Dialog ([uint32]$p.Id) $T.Caption 12
+  Check "a changed folder is reported" ($moved -ne [IntPtr]::Zero)
+  if ($moved -ne [IntPtr]::Zero) {
+    $said = [VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($moved, 65535))
+    Check "the question names the old folder" ($said -match [regex]::Escape($fakeOldFolder)) "(box said [$said])"
+    [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($moved, 7))   # IDNO = leave it alone
+    Start-Sleep -Milliseconds 900
+  }
+  $askedFor = (Get-ItemProperty -Path $regKey -Name "MoveAsked" -ErrorAction SilentlyContinue).MoveAsked
+  Check "the folder that was asked about is remembered" ($askedFor -eq $SevenZipDir) "(got [$askedFor])"
+  Stop-Fm $p
+
+  $p = Start-Fm ""
+  $again = Wait-Dialog ([uint32]$p.Id) $T.Caption 8
+  Check "the moved-folder question does not come back" ($again -eq [IntPtr]::Zero)
+  Stop-Fm $p
+
+  # ---- C: a registration whose folder is gone is a broken entry, not a question
+  $gone = Join-Path $workDir "folder-that-is-not-there"
+  Set-ItemProperty -Path $regKey -Name "LastRegistered" -Value $gone -Type String
+  Remove-ItemProperty -Path $regKey -Name "MoveAsked" -ErrorAction SilentlyContinue
+  $p = Start-Fm ""
+  $quiet = Wait-Dialog ([uint32]$p.Id) $T.Caption 6
+  Check "a registration for a missing folder is cleaned up without a question" ($quiet -eq [IntPtr]::Zero)
+  $regGone = (Get-ItemProperty -Path $regKey -Name "LastRegistered" -ErrorAction SilentlyContinue).LastRegistered
+  Check "the dead registration was dropped" ([string]::IsNullOrEmpty($regGone)) "(got [$regGone])"
+  Check "the broken uninstall entry was removed" (-not (Test-Path -LiteralPath $uninstallKey))
+  Stop-Fm $p
+}
+
+# the shortcuts and the entry this test created are removed again, whatever happened above
+Remove-Item -LiteralPath $deskShortcut -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $startShortcut -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
+Check "the test cleaned up its shortcuts" ((-not (Test-Path -LiteralPath $deskShortcut)) -and (-not (Test-Path -LiteralPath $startShortcut)))
+
 if (-not $g.HasExited) { Stop-Process -Id $g.Id -Force }
 } finally {
   Stop-Fm $null

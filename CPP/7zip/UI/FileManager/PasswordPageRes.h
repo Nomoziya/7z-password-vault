@@ -14,5 +14,8 @@
 #define IDB_PASSWORD_IMPORT       2613
 #define IDX_PASSWORD_HIDE_LIST    2614
 #define IDX_PASSWORD_UNNAMED_PW   2615
+/* action button: create the shortcuts and the "Apps & features" entry now, without waiting
+   for the first-start question (or after it was answered with "no") */
+#define IDB_PASSWORD_SETUP        2616
 
 #define IDE_PASSWORD_VAULT_PATH   101

@@ -116,3 +116,7 @@
 #define IDT_PASSWORD_FIRST_RUN_Q        3868
 #define IDT_PASSWORD_FIRST_RUN_OK       3869
 #define IDT_PASSWORD_FIRST_RUN_FAILED   3870
+
+/* the program folder changed since the shortcuts / uninstall entry were registered (the
+   portable package was moved or copied): offer to update them, once per folder */
+#define IDT_PASSWORD_MOVED_ASK          3871

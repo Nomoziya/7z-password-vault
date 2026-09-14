@@ -429,6 +429,10 @@ static BOOL InitInstance(int nCmdShow)
      current user only, and 7zG.exe never asks. */
   SetupShortcuts_AskIfNeeded((HWND)wnd);
 
+  /* A portable copy that was moved keeps its shortcuts and its uninstall entry pointing at
+     the old folder; the copy asks once per folder whether they should be updated. */
+  SetupShortcuts_CheckLocation((HWND)wnd);
+
   return TRUE;
 }
 

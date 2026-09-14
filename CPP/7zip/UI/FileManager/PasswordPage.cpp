@@ -12,6 +12,7 @@
 #include "PasswordPage.h"
 #include "PasswordPageRes.h"
 #include "PasswordVault.h"
+#include "SetupShortcuts.h"   // the button registers the shortcuts / uninstall entry
 
 using namespace NWindows;
 
@@ -380,6 +381,12 @@ bool CPasswordPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
       return true;
     case IDB_PASSWORD_IMPORT:
       OnImport();
+      return true;
+    case IDB_PASSWORD_SETUP:
+      /* Not a setting: it registers the shortcuts and the "Apps & features" entry for the
+         folder the program runs in and reports the outcome. Nothing on the page changes, so
+         it must not enable Apply. */
+      SetupShortcuts_Register(*this, true);
       return true;
     case IDX_PASSWORD_USE_MASTER:
     case IDX_PASSWORD_REMEMBER:

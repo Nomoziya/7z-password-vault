@@ -19,4 +19,16 @@
    single archive operation and must not ask questions about setup. */
 void SetupShortcuts_AskIfNeeded(HWND parent);
 
+/* Called right after the question: the folder recorded as "registered" is compared with the
+   folder the program runs in now. When the portable package was moved or copied, the
+   shortcuts and the "Apps & features" entry still point at the old place - the user is asked
+   once per folder whether they should be updated. An entry whose folder no longer exists is a
+   broken reference and is removed quietly. Nothing is changed without an answer. */
+void SetupShortcuts_CheckLocation(HWND parent);
+
+/* Registers (or refreshes) the shortcuts and the uninstall entry for the current folder
+   without asking: this is what the settings page button calls, and what both questions call
+   when the answer is yes. showResult adds the confirmation box. */
+bool SetupShortcuts_Register(HWND parent, bool showResult);
+
 #endif

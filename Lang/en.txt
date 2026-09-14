@@ -265,6 +265,8 @@ Import vault...
 Show saved passwords in the list
 2615
 Show password of unnamed entries (easier to find)
+2616
+Create shortcuts / register uninstall...
 2900
 About 7-Zip
 7-Zip is free software
@@ -475,6 +477,8 @@ Create shortcuts on the Start Menu and the desktop, and register an uninstall en
 Shortcuts were created (Start Menu, desktop) and an uninstall entry was registered in "Apps & features".\n\n{0}
 3870
 Some shortcuts or the registry entry could not be created (a system policy may block them).\n\nThe program itself is unaffected - just run 7zFM.exe in this folder:\n{0}
+3871
+The program folder seems to have changed:\n\nRegistered for: {0}\nRunning from: {1}\n\nUpdate the shortcuts and the uninstall entry in "Apps & features" to this location?
 3900
 Elapsed time:
 Remaining time:
