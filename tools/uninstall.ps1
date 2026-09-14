@@ -146,6 +146,43 @@ if ($VaultAction -eq "Ask" -and -not $WhatIf) {
   }
 }
 
+# ---------------------------------------------------------------- the vault, first
+# Nothing may be deleted before the vault is safe: the default location is inside the
+# program folder, which the end of this script removes.
+if ($VaultAction -eq "Keep" -and (Test-InsideDir $vaultPath $installDirFull) -and
+    (Test-Path -LiteralPath $vaultPath) -and -not $WhatIf) {
+  # %APPDATA%\7-Zip is the location the program looks in when the program folder has no
+  # vault, so a reinstall finds it there without any manual step.
+  $roamingDir = Join-Path $env:APPDATA "7-Zip"
+  New-Item -ItemType Directory -Force -Path $roamingDir -ErrorAction SilentlyContinue | Out-Null
+  $rescue = Join-Path $roamingDir "7zPasswordVault.dat"
+  $manual = $false
+  if (Test-Path -LiteralPath $rescue) {
+    # do not overwrite a vault that is already there
+    $rescue = Join-Path $roamingDir ("7zPasswordVault-rescued-{0}.dat" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
+    $manual = $true
+  }
+  try {
+    Move-Item -LiteralPath $vaultPath -Destination $rescue -Force:$false -ErrorAction Stop
+  } catch {
+    Say ""
+    Say "  [STOP] the vault file is inside the program folder and could not be moved:" -ForegroundColor Red
+    Say "         $vaultPath" -ForegroundColor Red
+    Say "         $($_.Exception.Message)" -ForegroundColor Red
+    Say "  Move it somewhere else by hand, then run the uninstaller again." -ForegroundColor Red
+    Say "  Nothing was deleted." -ForegroundColor Red
+    exit 1
+  }
+  $vaultPath = $rescue
+  Say ""
+  Say "Your saved passwords were moved out of the program folder to:"
+  Say "  $rescue"
+  if ($manual) {
+    Say "  (another vault was already there, so this one keeps its own name:"
+    Say "   point Tools -> Options -> Password manager at this file to use it)"
+  }
+}
+
 # ---------------------------------------------------------------- confirm
 Say ""
 Say "Folder to remove : $installDirFull"
@@ -299,26 +336,7 @@ if ($AllUsers) {
 Say ""
 Say "Vault file..."
 if ($VaultAction -eq "Keep") {
-  if ((Test-InsideDir $vaultPath $installDirFull) -and (Test-Path -LiteralPath $vaultPath) -and -not $WhatIf) {
-    # The default location is next to the program and the program folder is removed
-    # below, so "kept" has to mean moved out of the way first - otherwise the promise
-    # would be a lie and the passwords would be gone for good.
-    $rescue = Join-Path $env:USERPROFILE ("7zPasswordVault-{0}.dat" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
-    try {
-      Move-Item -LiteralPath $vaultPath -Destination $rescue -Force -ErrorAction Stop
-    } catch {
-      Say ""
-      Say "  [STOP] the vault file is inside the program folder and could not be moved:" -ForegroundColor Red
-      Say "         $vaultPath" -ForegroundColor Red
-      Say "         $($_.Exception.Message)" -ForegroundColor Red
-      Say "  Move it somewhere else by hand, then run the uninstaller again." -ForegroundColor Red
-      exit 1
-    }
-    $vaultPath = $rescue
-    Keep "your saved passwords (moved out of the program folder): $rescue"
-  } else {
-    Keep "your saved passwords: $vaultPath"
-  }
+  Keep "your saved passwords: $vaultPath"
   $tmp = "$vaultPath.tmp"
   if (Test-Path -LiteralPath $tmp) { Remove-ItemSafe $tmp "leftover temporary vault" }
 } else {
@@ -336,7 +354,7 @@ if ($VaultAction -eq "Keep") {
 Say ""
 Say "Program folder..."
 if ($WhatIf) {
-  Say "  [would remove] $installDirFull (everything in it)"
+  Say "  [would remove] the files of this package in $installDirFull (anything else stays)"
 } else {
   $self = $MyInvocation.MyCommand.Path
   # Only the files that ship with this package are removed by name. The folder may be a

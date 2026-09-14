@@ -154,7 +154,8 @@ every rebuild.
 
 ### Uninstall
 
-The package is portable, so there is nothing in "Programs and features". Run
+The installer build registers itself in *Apps & features*; the portable build has
+nothing there. Either way run
 `uninstall.cmd` in the program folder (or `pwsh -File uninstall.ps1`):
 
 ```bat
@@ -173,7 +174,10 @@ folder**, shortcuts that point at it, and the folder itself. Before the settings
 is deleted it is exported to `%TEMP%\7zip-vault-settings-<date>.reg`, because that key
 also holds the vault path, and the summary tells you how to restore it
 (`reg import "<file>"`). The vault file is the one thing you choose: keep it and a
-reinstall finds your passwords again (the settings key is recreated on the next save).
+reinstall finds your passwords again without a manual step: it is moved to
+`%APPDATA%\7-Zip\7zPasswordVault.dat`, which is where the program looks next. Only the
+files that ship with the package are removed from the folder, so a folder that also
+holds your own files is kept (and reported) instead of being emptied.
 Archives and documents are never touched.
 ### Verifying the binaries
 
@@ -373,7 +377,7 @@ make -f ../../cmpl_gcc.mak
 
 ### 卸载
 
-本包是便携版，不会出现在「程序和功能」里。运行程序目录下的 `uninstall.cmd`
+安装版会出现在「应用和功能」里，便携版不会。两种情况都可以运行程序目录下的 `uninstall.cmd`
 （或 `pwsh -File uninstall.ps1`）：
 
 ```bat
@@ -389,7 +393,10 @@ uninstall.cmd -WhatIf         :: 只打印将删除什么，不动手
 与 7-Zip 自身的每用户设置）、**指向该目录的**每用户文件关联与右键菜单扩展注册、
 指向它的快捷方式，最后删掉整个目录。删除设置键之前会先把它导出到
 `%TEMP%\7zip-vault-settings-<日期>.reg`（该键里也存着密码库路径），结尾会打印文件位置与
-恢复命令 `reg import "<文件>"`。唯一由你决定的是密码库文件：保留它，重新安装后密码还在
+恢复命令 `reg import "<文件>"`。唯一由你决定的是密码库文件：选**保留**时它会先被移出程序目录到
+`%APPDATA%\7-Zip\7zPasswordVault.dat`（程序在程序目录找不到库时正是去这里找），因此重装后无需手工
+步骤即可继续使用；目录里只删随包发布的文件，若目录里还有你自己的东西则整个保留并列出。原说明如下
+（保留语义见上）：
 （设置键会在下一次保存时自动重建）。压缩包和文档等数据一律不动。
 ### 校验二进制 / 误报处理
 

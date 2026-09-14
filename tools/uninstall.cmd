@@ -12,6 +12,7 @@ where pwsh.exe >nul 2>nul && set "PS=pwsh.exe"
 if errorlevel 1 (
   echo.
   echo The uninstaller reported a problem. Read the messages above.
-  pause
+  rem An unattended run (-Yes) must not wait for a keypress: it has no console to press.
+  echo %* | findstr /i /c:"-Yes" >nul || pause
 )
 endlocal

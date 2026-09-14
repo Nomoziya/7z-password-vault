@@ -553,6 +553,12 @@ UString CPasswordVault::AdoptPortableDefault()
   }
 
 
+  /* Persist the new location: the decision must not be re-derived from the file
+     system on every start (a second process, a temporarily unwritable folder or a
+     stray file would change the answer). */
+  settings.VaultPath = us2fs(portable);
+  settings.Save();
+
   UString message = PasswordVault_GetText(IDT_PASSWORD_MOVED_TO_PORTABLE,
       L"密码库文件已移动到程序所在文件夹：\n\n{0}");
   message.Replace(UString(L"{0}"), portable);
@@ -575,6 +581,7 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
 {
   _entries.Clear();
   _masterMode = false;
+  _readFailed = false;
 
   CInFile f;
   if (!f.Open(_path))
@@ -588,6 +595,7 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
       return true; // really does not exist yet
     SetPathError(errorMessage, IDT_PASSWORD_ERR_OPEN,
         L"无法打开密码库文件：\n{0}\n{1}", _path, sysError);
+    _readFailed = true;
     return false;
   }
 
@@ -595,6 +603,7 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
   char magic[4];
   if (!ReadBuf(f, magic, 4) || memcmp(magic, kMagic, 4) != 0)
   {
+    _readFailed = true;
     SetError(errorMessage, IDT_PASSWORD_ERR_MAGIC, L"密码库文件头无效");
     return false;
   }
@@ -619,12 +628,30 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
 
 bool CPasswordVault::Save(UString &errorMessage, HWND parent)
 {
+  if (_readFailed)
+  {
+    /* Load() could not read the file that is there. Writing now would replace it with
+       the empty list in memory - a vault that cannot be opened must never be
+       overwritten, no matter which dialog asks for a save. */
+    SetPathError(errorMessage, IDT_PASSWORD_ERR_OPEN,
+        L"无法打开密码库文件：\n{0}\n{1}", _path, 0);
+    return false;
+  }
+
   EnsureFolderExists(_path);
 
   /* Write to a temporary file first, then replace the real file atomically.
      Otherwise a crash / power loss in the middle of a write would destroy
      the whole vault (all saved passwords). */
-  const UString tmpPath = _path + L".tmp";
+  UString tmpPath = _path + L".tmp";
+  {
+    /* 7zFM and 7zG can save at the same time: without the process id they would write
+       the same temporary file and replace the vault with a half written one. */
+    UString pid;
+    pid.Add_UInt32((UInt32)::GetCurrentProcessId());
+    tmpPath += L".";
+    tmpPath += pid;
+  }
 
   {
     COutFile f;

@@ -45,6 +45,17 @@ void CPasswordVaultUi::ReadSettings()
   _promptToSaveNew = settings.PromptToSaveNew;
 }
 
+/* The open-error text with the path filled in: the message comes from the lang
+   file and still contains its {0} / {1} markers. */
+static UString OpenErrorMessage(const UString &path)
+{
+  UString s = PasswordVault_GetText(IDT_PASSWORD_ERR_OPEN,
+      L"无法打开密码库文件：\n{0}\n{1}");
+  s.Replace(UString(L"{0}"), path);
+  s.Replace(UString(L"{1}"), UString());
+  return s;
+}
+
 void CPasswordVaultUi::Load(HWND parent)
 {
   ReadSettings();
@@ -58,7 +69,7 @@ void CPasswordVaultUi::Load(HWND parent)
   _vault.SetPath(CPasswordVault::GetConfiguredPath());
   UString error;
   _loaded = _vault.Load(parent, error);
-  if (!_loaded)
+  if (!_loaded && !error.IsEmpty())
     VaultErrorMessage(parent, error);
 }
 
@@ -127,6 +138,14 @@ bool CPasswordVaultUi::OnTimer(HWND parent, WPARAM timerID, CEdit &edit)
 
 bool CPasswordVaultUi::ShowList(HWND parent, CEdit &edit)
 {
+  if (!_loaded)
+  {
+    /* Editing a vault that could not be read would delete or rewrite entries the user
+       cannot see. */
+    VaultErrorMessage(parent, OpenErrorMessage(_vault.GetPath()));
+    return false;
+  }
+
   UString before;
   edit.GetText(before);
 
@@ -155,8 +174,7 @@ bool CPasswordVaultUi::AddOrUpdate(HWND parent, const UString &name, const UStri
   {
     /* The vault could not be read (see Load). Saving now would write the empty list in
        memory over whatever is on disk. */
-    VaultErrorMessage(parent, PasswordVault_GetText(IDT_PASSWORD_ERR_OPEN,
-        L"无法打开密码库文件：\n{0}\n{1}"));
+    VaultErrorMessage(parent, OpenErrorMessage(_vault.GetPath()));
     return false;
   }
 

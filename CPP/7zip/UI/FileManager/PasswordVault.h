@@ -32,6 +32,10 @@ class CPasswordVault
   CObjectVector<CPasswordVaultEntry> _entries;
   UString _path;
   bool _masterMode; // how the file was last saved
+  /* The file exists but could not be read (locked, no permission, wrong account).
+     Saving in that state would write the empty list in memory over the real file, so
+     Save() refuses until a Load() succeeded. */
+  bool _readFailed;
 
   bool Load_DPAPI(NWindows::NFile::NIO::CInFile &f, Byte version, UString &errorMessage);
   bool Load_Master(HWND parent, NWindows::NFile::NIO::CInFile &f, UString &errorMessage);
