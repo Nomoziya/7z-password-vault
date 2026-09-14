@@ -167,6 +167,16 @@ The portable zip is the only published download (`installer\build.ps1` builds th
 machine-learning verdict on an unsigned binary, so the durable fixes are a code-signing
 certificate and, until then, one false-positive submission per rebuild.
 
+### The verdicts fluctuate between scans / 同一文件不同时间扫描结果会变
+
+Measured on the same unchanged file: `7zG.exe` (`60587682…`) was reported as **0/65** earlier
+the same day and as **1/69** (`Microsoft: Trojan:Win32/Wacatac.B!ml`) a few hours later, and
+`7zFM.exe` switched between the `B!ml` and `C!ml` labels of the same family. The engine set and
+the machine-learning scores both move, so a single scan is an observation, not a property of
+the file. That is why `docs/acceptance-plan.md` sets the bar at "at most the control baseline
++ 1, and never more than 2 engines" instead of "zero detections", and why the same hash should
+be looked up again before a release is judged.
+
 ### Ready to paste into the Microsoft submission form / 可直接粘贴的提交内容
 
 The form (<https://www.microsoft.com/en-us/wdsi/filesubmission>) asks for the file, the

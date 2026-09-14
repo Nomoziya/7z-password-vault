@@ -19,5 +19,10 @@
 
 v1.4.4 的产物里带的是旧卸载程序。已发布的资产不替换（哈希已经公开），需要这个修复的用户请用本版。
 
-VirusTotal（2026-09-14）：`portable.zip` **0/67**，`7zG.exe` **0/65**，`7zFM.exe` 1/69（微软 `Wacatac.B!ml`
-的 ML 误报，持久解法是代码签名；提交内容已备好在 `docs/vt-false-positive-report.md`）。
+VirusTotal（2026-09-14）：`portable.zip` **0/68**（本次发布的包仍是全清），`7zFM.exe` 1/69
+（微软 `Wacatac.C!ml`）、`7zG.exe` 1/69（微软 `Wacatac.B!ml`）。
+
+**注意同一文件在不同时间扫描结果会变**：`7zG.exe` 的哈希在本次发布里没有改变（`60587682…`），
+上一轮扫描是 0/65，本轮是 1/69 —— 引擎集合与 ML 判决都会浮动。这也是为什么验收标准写的是
+「≤ 对照基线 + 1 且 ≤ 2 个引擎」而不是「必须 0」（见 `docs/acceptance-plan.md`）。
+持久解法仍是代码签名；在那之前每次重建后按 `docs/vt-false-positive-report.md` 里的现成文案提交微软误报。
