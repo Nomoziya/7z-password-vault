@@ -671,8 +671,38 @@ function Start-Fm([string]$arg) {
 # Stops only the instance this test started: a blanket "stop every 7zFM" would
 # kill whatever the user has open.
 function Stop-Fm($p) {
-  if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+  if ($p -and -not $p.HasExited) {
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    # The process has to be gone before the next test starts: two running copies share
+    # the registry settings and the vault file, and a leftover keeps 7zFM.exe in the
+    # distribution folder locked (the next build then cannot replace it).
+    $deadline = (Get-Date).AddSeconds(5)
+    while (-not $p.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+  }
   Start-Sleep -Milliseconds 400
+}
+
+# Kills 7-Zip instances left behind by an earlier interrupted run - but only those started
+# from this test's own build. A blanket "kill every 7zFM" would end the user's session.
+function Clear-OwnInstances() {
+  $killed = 0
+  foreach ($name in @("7zFM", "7zG")) {
+    foreach ($proc in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
+      $path = $null
+      try { $path = $proc.Path } catch { }
+      if (-not $path) { continue }
+      foreach ($own in @($fmExe, $guiExe)) {
+        if ($own -and [string]::Equals($path, $own, [System.StringComparison]::OrdinalIgnoreCase)) {
+          try { $proc.Kill(); $killed++ } catch { }
+          break
+        }
+      }
+    }
+  }
+  if ($killed) {
+    Start-Sleep -Milliseconds 700
+    Write-Host ("  cleaned up {0} 7-Zip instance(s) from an earlier run" -f $killed) -ForegroundColor DarkGray
+  }
 }
 
 # Polls instead of sleeping for a fixed time, so a loaded machine does not turn
@@ -919,6 +949,7 @@ Set-ItemProperty -Path $regKey -Name "ShowPasswordInList" -Value 0 -Type DWord  
 Set-ItemProperty -Path $regKey -Name "CloseAfterFill"    -Value 1 -Type DWord   # close after filling by default
 Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 Check "the test does not use the real vault" ($vault -ne $realVault)
+Clear-OwnInstances
 Write-Host ("  UI language: {0}{1}" -f $UiLang, $(if ($script:restoreLang) { " (forced through HKCU\Software\7-Zip\Lang)" } else { "" })) -ForegroundColor DarkGray
 
 # Creates one entry through the new-password window. This was the most repeated block
@@ -2262,6 +2293,7 @@ Check "7zG finished (proof)" ($g.HasExited)
 if (-not $g.HasExited) { Stop-Process -Id $g.Id -Force }
 } finally {
   Stop-Fm $null
+  Clear-OwnInstances
   Set-VaultSettings $savedSettings
   Restore-Isolation
   if ($script:restoreLang) {

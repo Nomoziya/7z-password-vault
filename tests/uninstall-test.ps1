@@ -48,6 +48,25 @@ function New-FakeInstall([string]$dir) {
   Copy-Item -LiteralPath (Join-Path $root "tools\uninstall.cmd") -Destination (Join-Path $dir "uninstall.cmd") -Force
   New-Item -ItemType Directory -Force -Path (Join-Path $dir "Lang") | Out-Null
   Set-Content -LiteralPath (Join-Path $dir "Lang\en.txt") -Value "x" -Encoding UTF8
+  # The package ships a hash list and the uninstaller deletes by hash, so a fake
+  # installation has to have one as well - otherwise this test would only exercise
+  # the "delete every file of that name" fallback.
+  Write-HashList $dir
+}
+
+# Writes SHA256SUMS.txt for everything currently in $dir, using the same format as
+# tests\deploy.ps1. $skip lists relative paths that must stay out of the list.
+function Write-HashList([string]$dir, [string[]]$skip = @(), [string[]]$extra = @()) {
+  $lines = New-Object System.Collections.Generic.List[string]
+  $lines.Add("# fake package hash list (test)")
+  $lines.AddRange($extra)
+  Get-ChildItem -LiteralPath $dir -Recurse -File | Where-Object {
+    $_.Name -ne "SHA256SUMS.txt" -and $skip -notcontains $_.FullName.Substring($dir.Length + 1)
+  } | Sort-Object FullName | ForEach-Object {
+    $rel = $_.FullName.Substring($dir.Length + 1)
+    $lines.Add(("{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower(), $rel))
+  }
+  Set-Content -LiteralPath (Join-Path $dir "SHA256SUMS.txt") -Value $lines -Encoding UTF8
 }
 
 function New-FakeState([string]$installDir, [string]$vaultPath) {
@@ -55,10 +74,16 @@ function New-FakeState([string]$installDir, [string]$vaultPath) {
   Set-ItemProperty -Path $regKey -Name "VaultPath" -Value $vaultPath -Type String
   Set-ItemProperty -Path $regKey -Name "UseMasterPassword" -Value 0 -Type DWord
   Set-Content -LiteralPath $vaultPath -Value "fake vault" -Encoding UTF8
-  # a per-user association and shell-extension registration of this folder
-  New-Item -Path (Join-Path $classes "7-Zip.zztest") -Force | Out-Null
+  # a per-user association of this folder (the command is what makes it ours) and a
+  # look-alike key of another 7-Zip that must survive
+  New-Item -Path (Join-Path $classes "7-Zip.zztest\shell\open\command") -Force | Out-Null
+  Set-ItemProperty -Path (Join-Path $classes "7-Zip.zztest\shell\open\command") -Name "(default)" `
+    -Value ('"' + (Join-Path $installDir "7zFM.exe") + '" "%1"')
   New-Item -Path (Join-Path $classes ".zztest") -Force | Out-Null
   Set-ItemProperty -Path (Join-Path $classes ".zztest") -Name "(default)" -Value "7-Zip.zztest"
+  New-Item -Path (Join-Path $classes "7-Zip.zzforeign\shell\open\command") -Force | Out-Null
+  Set-ItemProperty -Path (Join-Path $classes "7-Zip.zzforeign\shell\open\command") -Name "(default)" `
+    -Value '"C:\Windows\System32\notepad.exe" "%1"'
   $clsid = Join-Path $classes "CLSID\{23170F69-40C1-278A-1000-000100029999}"
   New-Item -Path (Join-Path $clsid "InprocServer32") -Force | Out-Null
   Set-ItemProperty -Path (Join-Path $clsid "InprocServer32") -Name "(default)" -Value (Join-Path $installDir "7-zip.dll")
@@ -98,6 +123,7 @@ try {
   Check "HKCU\Software\7-Zip was removed" (-not (Test-Path -LiteralPath $regRoot))
   Check "the per-user file type was removed" (-not (Test-Path -LiteralPath (Join-Path $classes "7-Zip.zztest")))
   Check "the per-user association was removed" (-not (Test-Path -LiteralPath (Join-Path $classes ".zztest")))
+  Check "an association of another 7-Zip was kept" (Test-Path -LiteralPath (Join-Path $classes "7-Zip.zzforeign"))
   Check "the shell extension registration was removed" (-not (Test-Path -LiteralPath $clsid))
   Check "the shortcut pointing here was removed" (-not (Test-Path -LiteralPath $fakeShortcut))
   $gone = $false
@@ -106,7 +132,8 @@ try {
     if (-not (Test-Path -LiteralPath $install)) { $gone = $true; break }
     Start-Sleep -Milliseconds 300
   }
-  Check "the program folder was removed" $gone "(still there: $install)"
+  $leftover = @(Get-ChildItem -LiteralPath $install -Force -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+  Check "the program folder was removed" $gone "(still there: $install; contents: $($leftover -join ', '))"
   if (-not (Test-Path -LiteralPath $vaultA)) { Check "vault kept (recheck)" $false }
 
   # ---------------------------------------------------------------- case 2: delete the vault
@@ -140,6 +167,33 @@ try {
   Remove-Item -Recurse -Force $install -ErrorAction SilentlyContinue
   Remove-Item -Path (Join-Path $classes "7-Zip.zztest"),(Join-Path $classes ".zztest") -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $fakeShortcut -Force -ErrorAction SilentlyContinue
+
+  # ------------------------------------------- case 4: a folder shared with other tools
+  Write-Host "`n== 4. foreign files in the same folder are kept ==" -ForegroundColor Cyan
+  # The install folder may also hold an official 7-Zip or the user's own tools. The
+  # hash list is what tells our files apart, so this case gives the folder
+  #   - a file with one of our names but different content  -> must be kept
+  #   - a file the manifest never mentions                  -> must be kept
+  $install = Join-Path $work "install-mixed"
+  $vaultD = Join-Path $work "mixed-vault.dat"
+  New-FakeInstall $install
+  [void](New-FakeState $install $vaultD)
+  Set-Content -LiteralPath (Join-Path $install "foreign-tool.exe") -Value "not ours" -Encoding UTF8
+  Set-Content -LiteralPath (Join-Path $install "7z.exe") -Value "someone else's 7z" -Encoding UTF8
+  # Neither file may appear in the list, and 7z.exe is claimed with a hash that does not
+  # match the file, which is what an official 7-Zip in the same folder looks like.
+  Write-HashList $install -skip @("foreign-tool.exe", "7z.exe") `
+    -extra @("0000000000000000000000000000000000000000000000000000000000000000  7z.exe")
+
+  $out = Invoke-Uninstaller $install @("-KeepVault", "-Yes")
+  Start-Sleep -Seconds 3
+  Check "our files were removed (hash list used)" (-not (Test-Path -LiteralPath (Join-Path $install "7zFM.exe"))) "(still there)"
+  Check "a same-named file with a different hash was kept" (Test-Path -LiteralPath (Join-Path $install "7z.exe"))
+  Check "an unlisted file was kept" (Test-Path -LiteralPath (Join-Path $install "foreign-tool.exe"))
+  Check "the folder was kept because it still holds foreign files" (Test-Path -LiteralPath $install)
+  Check "the uninstaller says it kept foreign files" ($out -match "not ours") "(output was [$($out.Trim())])"
+  Check "the vault was kept in this case as well" (Test-Path -LiteralPath $vaultD)
+  Remove-Item -Recurse -Force $install -ErrorAction SilentlyContinue
 } finally {
   Write-Host "`n== restore ==" -ForegroundColor Cyan
   Remove-Item -Path $regRoot -Recurse -Force -ErrorAction SilentlyContinue

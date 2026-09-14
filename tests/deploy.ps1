@@ -3,6 +3,14 @@ $ErrorActionPreference = "Stop"
 $root = "D:\DSH Work\7z-passward"
 $dist = Join-Path $root "7-Zip-密码管家版"
 
+# A vault file in the build output is a test leftover - and if it ever held real entries
+# it would be published with the package. Stop here instead of shipping it.
+$strayVaults = @(Get-ChildItem -LiteralPath $dist -Filter "*.dat" -File -ErrorAction SilentlyContinue)
+if ($strayVaults.Count -gt 0) {
+  foreach ($v in $strayVaults) { Write-Host ("  stray vault in the output folder: {0} ({1} bytes)" -f $v.FullName, $v.Length) -ForegroundColor Yellow }
+  throw "delete the .dat file(s) in '$dist' first - a vault must not be shipped"
+}
+
 $copies = @(
   @{ src = "CPP\7zip\UI\FileManager\b\g\7zFM.exe"; dst = "7zFM.exe" },
   @{ src = "CPP\7zip\UI\GUI\b\g\7zG.exe";           dst = "7zG.exe" },

@@ -390,7 +390,9 @@ if ($WhatIf) {
   $removedFiles = 0
   $keptFiles = @()
   $manifestPath = Join-Path $installDirFull "SHA256SUMS.txt"
-  if (Test-Path -LiteralPath $manifestPath) {
+  $manifestUsed = Test-Path -LiteralPath $manifestPath
+  $manifestHasCmd = $false
+  if ($manifestUsed) {
     # The hash list decides what belongs to this package: a file of the same name that
     # does not match is somebody else's (an official 7-Zip in the same folder, or a file
     # the user put there) and is left alone.
@@ -406,7 +408,8 @@ if ($WhatIf) {
       if ($e.rel -match '\.\.' -or $e.rel.StartsWith("\") -or $e.rel -match '^[A-Za-z]:') {
         Skip "manifest entry rejected: $($e.rel)"; continue
       }
-      if ($e.rel -ieq "uninstall.ps1" -or $e.rel -ieq "uninstall.cmd" -or $e.rel -ieq "SHA256SUMS.txt") { continue }
+      if ($e.rel -ieq "uninstall.cmd") { $manifestHasCmd = $true; continue }
+      if ($e.rel -ieq "uninstall.ps1" -or $e.rel -ieq "SHA256SUMS.txt") { continue }
       $full = Join-Path $installDirFull $e.rel
       $dir = Split-Path -Parent $full
       if ($dir -and $dir -ne $installDirFull -and ($manifestDirs -notcontains $dir)) { $manifestDirs += $dir }
@@ -433,6 +436,12 @@ if ($WhatIf) {
         Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $f) { $keptFiles += $f } else { $removedFiles++ }
       }
+    }
+    # The hash list itself is ours by definition: only this package ships one. It has to
+    # go too, otherwise it stays behind with uninstall.cmd and the folder is never empty.
+    if (Test-Path -LiteralPath $manifestPath) {
+      Remove-Item -LiteralPath $manifestPath -Force -ErrorAction SilentlyContinue
+      if (Test-Path -LiteralPath $manifestPath) { $keptFiles += $manifestPath } else { $removedFiles++ }
     }
     Ok ("program files removed ({0} files, checked against SHA256SUMS.txt)" -f $removedFiles)
     if ($keptFiles.Count) {
@@ -463,15 +472,26 @@ if ($WhatIf) {
     }
     Ok ("program files removed ({0} files, by name)" -f $removedFiles)
   }
+  # uninstall.cmd is running the script that is doing this, and cmd.exe reads a batch file
+  # while it executes it, so that one file is left to the helper below.
+  $handedToHelper = @()
+  if ($manifestUsed -and $manifestHasCmd -and (Test-Path -LiteralPath (Join-Path $installDirFull "uninstall.cmd"))) {
+    $handedToHelper += "uninstall.cmd"
+  }
   $leftFiles = @(Get-ChildItem -LiteralPath $installDirFull -File -Force -ErrorAction SilentlyContinue |
-                 Where-Object { $_.Name -ne (Split-Path $self -Leaf) })
+                 Where-Object { $_.Name -ne (Split-Path $self -Leaf) -and $handedToHelper -notcontains $_.Name })
   $leftDirs = @(Get-ChildItem -LiteralPath $installDirFull -Directory -Force -ErrorAction SilentlyContinue)
   Remove-Item -LiteralPath $self -Force -ErrorAction SilentlyContinue
   if ($leftFiles.Count -eq 0 -and $leftDirs.Count -eq 0) {
     # nothing of ours and nothing foreign left: remove the (empty) folder itself, which
-    # the running script may still hold for a moment, so a helper does it.
-    Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "timeout", "/t", "2", ">nul", "&",
-        "rmdir", "/q", "`"$installDirFull`"") -WindowStyle Hidden
+    # the running script may still hold for a moment, so a helper does it. The batch
+    # launcher goes with it, after cmd.exe has had time to finish reading it.
+    $helper = @("/c", "timeout", "/t", "3", ">nul", "&")
+    foreach ($name in $handedToHelper) {
+      $helper += @("del", "/q", "`"$(Join-Path $installDirFull $name)`"", ">nul", "2>nul", "&")
+    }
+    $helper += @("rmdir", "/q", "`"$installDirFull`"")
+    Start-Process -FilePath "cmd.exe" -ArgumentList $helper -WindowStyle Hidden
     Ok "program folder (emptied; a helper removes the folder itself)"
   } else {
     Say ""

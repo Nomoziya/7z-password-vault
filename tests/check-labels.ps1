@@ -123,15 +123,31 @@ public class Meas2 {
       if (klass == "SysListView32" || klass == "SysHeader32" || klass == "ComboBox" || klass == "SysTabControl32") return true;
       RECT rc; if (!GetClientRect(h, out rc)) return true;
       int w = rc.right - rc.left;
+      int hgt = rc.bottom - rc.top;
       IntPtr font = SendMessageW(h, 0x0031, IntPtr.Zero, IntPtr.Zero);
       IntPtr old = IntPtr.Zero;
       if (font != IntPtr.Zero) old = SelectObject(memDc, font);
       SIZE sz; GetTextExtentPoint32W(memDc, text, text.Length, out sz);
-      if (font != IntPtr.Zero) SelectObject(memDc, old);
+      SIZE line; GetTextExtentPoint32W(memDc, "Ag", 2, out line);
       int pad = (klass == "Button") ? 10 : 2;
-      if (sz.cx > w - pad)
-        res.Add(string.Format("id={0,-5} {1,-11} rect={2,-5} need={3,-5} short={4,-4} | {5}",
-          GetDlgCtrlID(h), klass, w, sz.cx, sz.cx - w + pad, text));
+      int avail = w - pad;
+      if (avail < 1) avail = 1;
+      int lineHeight = line.cy > 0 ? line.cy : 16;
+      // A label that is too long for one line is only clipped when there is no room to
+      // wrap it: the message boxes grow downwards, so a long path in a dialog is not a
+      // defect. Measure per paragraph, because those texts contain line breaks.
+      int linesNeeded = 0;
+      foreach (string paragraph in text.Split('\n')) {
+        string p = paragraph.TrimEnd('\r');
+        SIZE ps; GetTextExtentPoint32W(memDc, p, p.Length, out ps);
+        linesNeeded += (ps.cx <= avail) ? 1 : ((ps.cx + avail - 1) / avail);
+      }
+      if (font != IntPtr.Zero) SelectObject(memDc, old);
+      int linesAvailable = hgt / lineHeight;
+      if (linesAvailable < 1) linesAvailable = 1;
+      if (linesNeeded > linesAvailable)
+        res.Add(string.Format("id={0,-5} {1,-11} rect={2,-5} need={3,-5} lines={4}/{5} | {6}",
+          GetDlgCtrlID(h), klass, w, sz.cx, linesNeeded, linesAvailable, text));
       return true;
     }, IntPtr.Zero);
     DeleteDC(memDc); ReleaseDC(IntPtr.Zero, screenDc);

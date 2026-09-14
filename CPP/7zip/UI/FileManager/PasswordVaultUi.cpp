@@ -203,6 +203,15 @@ bool CPasswordVaultUi::AddOrUpdate(HWND parent, const UString &name, const UStri
 
 void CPasswordVaultUi::CreateNew(HWND parent, CEdit *edit)
 {
+  if (!_loaded)
+  {
+    /* Asked here, not in AddOrUpdate: the name window must not open at all for a vault
+       that cannot be read, otherwise the user types a name and a password and is only
+       then told that nothing can be saved. */
+    VaultErrorMessage(parent, OpenErrorMessage(_vault.GetPath()));
+    return;
+  }
+
   UString current;
   if (edit)
     edit->GetText(current);
@@ -224,6 +233,12 @@ void CPasswordVaultUi::CreateNew(HWND parent, CEdit *edit)
 void CPasswordVaultUi::OfferToSave(HWND parent, const UString &password)
 {
   if (password.IsEmpty() || !_promptToSaveNew)
+    return;
+
+  /* A vault that could not be read reports itself when it is opened. Asking here as well
+     would mean a prompt on every password - the list in memory is empty, so nothing ever
+     matches - and the answer could not be honoured anyway. */
+  if (!_loaded)
     return;
 
   {

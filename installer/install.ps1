@@ -57,7 +57,7 @@ Get-ChildItem -LiteralPath $InstallDir -Recurse -File -ErrorAction SilentlyConti
 New-Item -Path $uninstallKey -Force | Out-Null
 $info = @{
   DisplayName     = "$appName 26.03"
-  DisplayVersion  = "1.4.2"
+  DisplayVersion  = "1.4.3"
   Publisher       = "Nomoziya"
   DisplayIcon     = $fm
   InstallLocation = $InstallDir

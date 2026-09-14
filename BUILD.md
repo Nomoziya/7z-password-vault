@@ -127,7 +127,8 @@ of them is a property of the toolchain rather than of this code:
    file, so it loses that file's reputation.
 2. **Unsigned and brand new.** No Authenticode signature and no prevalence data
    means a first-seen binary is scored harshly by cloud heuristics.
-3. **The behaviour shape.** It writes an encrypted file under `%APPDATA%`, uses AES
+3. **The behaviour shape.** It writes an encrypted file (next to the program by
+   default, `%APPDATA%\7-Zip` as the fallback), uses AES
    and PBKDF2, and starts child processes to compress and extract — a combination
    that also describes a dropper.
 4. **The import set (fixed).** A UCRT-flavoured MinGW-w64 makes even
