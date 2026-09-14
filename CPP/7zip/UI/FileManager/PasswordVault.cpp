@@ -7,6 +7,7 @@
 #include <bcrypt.h>
 
 #include "../../../Windows/FileIO.h"
+#include "../../../Windows/ErrorMsg.h"
 
 #include "../Common/ZipRegistry.h"
 
@@ -21,6 +22,7 @@ using namespace NFile;
 using namespace NIO;
 
 static const char kMagic[4] = { '7', 'Z', 'P', 'V' };
+static const wchar_t * const kDefaultFileName = L"7zPasswordVault.dat";
 /* Version 2: DPAPI mode stored entry names in clear.
    Version 3: DPAPI mode encrypts the names too. Version 2 files are still read. */
 static const Byte kVersion = 3;
@@ -130,6 +132,89 @@ static UString GetVaultFolderPath()
     folder = L".";
   folder += L"\\7-Zip";
   return folder;
+}
+
+UString PasswordVault_NormalizePath(const UString &path)
+{
+  UString p = path;
+  p.Trim();
+  if (p.Len() >= 2 && p[0] == L'"' && p.Back() == L'"')
+  {
+    p.Delete(0);
+    p.DeleteBack();
+    p.Trim();
+  }
+  if (p.IsEmpty())
+    return p;
+
+  bool isFolder = false;
+  const DWORD attr = ::GetFileAttributesW(p);
+  if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0)
+    isFolder = true;
+  else if (IS_PATH_SEPAR(p.Back()))
+    isFolder = true;
+
+  if (!isFolder)
+    return p;
+
+  if (!IS_PATH_SEPAR(p.Back()))
+    p.Add_PathSepar();
+  p += kDefaultFileName;
+  return p;
+}
+
+/* An error that carries the path, and the system message when a single Win32 call
+   failed: "cannot replace the vault file" on its own tells the user nothing about
+   what to fix. The system text comes localized from Windows. */
+static void SetPathError(UString &errorMessage, UInt32 langID, const wchar_t *fallback,
+    const UString &path, DWORD sysError)
+{
+  UString s = PasswordVault_GetText(langID, fallback);
+  s.Replace(UString(L"{0}"), path);
+  if (sysError != 0)
+  {
+    UString sys = NError::MyFormatMessage(sysError);
+    sys.Trim();
+    s.Replace(UString(L"{1}"), sys);
+  }
+  else
+    s.Replace(UString(L"{1}"), UString());
+  errorMessage = s;
+}
+
+/* The folder the running program sits in: both 7zFM and 7zG use this, so the
+   vault can live next to the executable instead of on the system drive. */
+static UString GetProgramFolderPath()
+{
+  wchar_t buf[MAX_PATH + 1];
+  const DWORD len = ::GetModuleFileNameW(NULL, buf, MAX_PATH);
+  if (len == 0 || len >= MAX_PATH)
+    return UString();
+  UString path;
+  path.SetFrom(buf, (unsigned)len);
+  const int pos = path.ReverseFind_PathSepar();
+  if (pos < 0)
+    return UString();
+  return path.Left((unsigned)pos);
+}
+
+/* Can a file be created in this folder? A program folder under Program Files cannot,
+   and then the vault has to stay in %APPDATA% instead of failing on every save. */
+static bool CanWriteToFolder(const UString &folder)
+{
+  if (folder.IsEmpty())
+    return false;
+  UString probe = folder;
+  probe.Add_PathSepar();
+  probe += kDefaultFileName;
+  probe += L".writetest";
+  /* FILE_FLAG_DELETE_ON_CLOSE: the probe removes itself when the handle is closed. */
+  HANDLE h = ::CreateFileW(probe, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+      FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+  if (h == INVALID_HANDLE_VALUE)
+    return false;
+  ::CloseHandle(h);
+  return true;
 }
 
 static void EnsureFolderExists(const UString &filePath)
@@ -372,9 +457,64 @@ bool CPasswordVault::GetMasterPassword(HWND parent, UString &password, UString &
 
 UString CPasswordVault::GetDefaultPath()
 {
-  UString path = GetVaultFolderPath();
-  path += L"\\7zPasswordVault.dat";
-  return path;
+  const UString programFolder = GetProgramFolderPath();
+  UString portable;
+  if (!programFolder.IsEmpty())
+  {
+    portable = programFolder;
+    portable.Add_PathSepar();
+    portable += kDefaultFileName;
+  }
+
+  UString roaming = GetVaultFolderPath();
+  roaming.Add_PathSepar();
+  roaming += kDefaultFileName;
+
+  /* Portable first: the vault sits next to the program. An existing file always
+     wins, so a vault in %APPDATA% is never silently replaced or lost. */
+  if (!portable.IsEmpty())
+  {
+    if (::GetFileAttributesW(portable) != INVALID_FILE_ATTRIBUTES)
+      return portable;
+    if (::GetFileAttributesW(roaming) == INVALID_FILE_ATTRIBUTES && CanWriteToFolder(programFolder))
+      return portable;
+  }
+  return roaming;
+}
+
+UString CPasswordVault::AdoptPortableDefault()
+{
+  /* Nothing configured and the vault still sits in %APPDATA%\7-Zip: move it next to
+     the program, which is what the portable default is for. */
+  NPasswordVault::CInfo settings;
+  settings.Load();
+  if (!settings.VaultPath.IsEmpty())
+    return UString();   /* the location was chosen by the user - never touch it */
+
+  const UString programFolder = GetProgramFolderPath();
+  if (programFolder.IsEmpty() || !CanWriteToFolder(programFolder))
+    return UString();
+
+  UString portable = programFolder;
+  portable.Add_PathSepar();
+  portable += kDefaultFileName;
+
+  UString roaming = GetVaultFolderPath();
+  roaming.Add_PathSepar();
+  roaming += kDefaultFileName;
+
+  if (::GetFileAttributesW(portable) != INVALID_FILE_ATTRIBUTES)
+    return UString();   /* already portable */
+  if (::GetFileAttributesW(roaming) == INVALID_FILE_ATTRIBUTES)
+    return UString();   /* no old vault to move */
+
+  if (!::MoveFileExW(roaming, portable, 0))
+    return UString();   /* the old location stays in use */
+
+  UString message = PasswordVault_GetText(IDT_PASSWORD_MOVED_TO_PORTABLE,
+      L"密码库文件已移动到程序所在文件夹：\n\n{0}");
+  message.Replace(UString(L"{0}"), portable);
+  return message;
 }
 
 UString CPasswordVault::GetConfiguredPath()
@@ -382,7 +522,7 @@ UString CPasswordVault::GetConfiguredPath()
   NPasswordVault::CInfo settings;
   settings.Load();
   if (!settings.VaultPath.IsEmpty())
-    return settings.VaultPath;
+    return PasswordVault_NormalizePath(settings.VaultPath);
   return CPasswordVault::GetDefaultPath();
 }
 
@@ -436,7 +576,9 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent)
     COutFile f;
     if (!f.Create_ALWAYS(tmpPath))
     {
-      SetError(errorMessage, IDT_PASSWORD_ERR_CREATE, L"无法创建密码库文件");
+      const DWORD sysError = ::GetLastError();
+      SetPathError(errorMessage, IDT_PASSWORD_ERR_CREATE, L"无法创建密码库文件：\n{0}\n{1}",
+          _path, sysError);
       return false;
     }
 
@@ -454,7 +596,8 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent)
     }
 
     if (!ok && errorMessage.IsEmpty())
-      SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
+      SetPathError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件：\n{0}",
+          _path, 0);
 
     f.Close();
 
@@ -467,7 +610,11 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent)
 
   if (!::MoveFileExW(tmpPath, _path, MOVEFILE_REPLACE_EXISTING))
   {
-    SetError(errorMessage, IDT_PASSWORD_ERR_REPLACE, L"无法替换密码库文件");
+    /* The reason is captured before anything else runs: DeleteFileW below would
+       overwrite it. */
+    const DWORD sysError = ::GetLastError();
+    SetPathError(errorMessage, IDT_PASSWORD_ERR_REPLACE, L"无法替换密码库文件：\n{0}\n{1}",
+        _path, sysError);
     ::DeleteFileW(tmpPath);
     return false;
   }

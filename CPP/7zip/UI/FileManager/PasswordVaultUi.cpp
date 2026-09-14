@@ -48,6 +48,13 @@ void CPasswordVaultUi::ReadSettings()
 void CPasswordVaultUi::Load(HWND parent)
 {
   ReadSettings();
+
+  /* First run after an update: an old vault in %APPDATA%\7-Zip moves next to the
+     program, so the system drive is not used for it any more. */
+  const UString moved = CPasswordVault::AdoptPortableDefault();
+  if (!moved.IsEmpty())
+    ::MessageBoxW(parent, moved, PasswordVault_GetCaption(), MB_ICONINFORMATION | MB_OK);
+
   _vault.SetPath(CPasswordVault::GetConfiguredPath());
   UString error;
   _loaded = _vault.Load(parent, error);

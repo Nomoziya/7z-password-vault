@@ -65,7 +65,7 @@ UString CPasswordPage::GetVaultPathFromUi()
 {
   UString pathU;
   _vaultPathEdit.GetText(pathU);
-  pathU.Trim();
+  pathU = PasswordVault_NormalizePath(pathU);
   if (pathU.IsEmpty())
     return CPasswordVault::GetDefaultPath();
   return pathU;
@@ -110,7 +110,12 @@ void CPasswordPage::OnBrowse()
   UString resultPath;
   const UString title = PasswordVault_GetText(IDT_PASSWORD_PICK_FOLDER, L"选择密码库文件夹");
   if (MyBrowseForFolder(*this, title, currentPath, resultPath))
+  {
     _vaultPathEdit.SetText(resultPath);
+    /* SetText does not raise EN_CHANGE, and that notification is what enables Apply:
+       without it, choosing a folder and pressing OK applied nothing. */
+    ModifiedEvent();
+  }
 }
 
 void CPasswordPage::OnSetMasterPassword()
@@ -403,7 +408,8 @@ LONG CPasswordPage::OnApply()
 
   UString pathU;
   _vaultPathEdit.GetText(pathU);
-  pathU.Trim();
+  /* A folder is accepted and means "the vault file lives in this folder". */
+  pathU = PasswordVault_NormalizePath(pathU);
 
   const bool newUseMaster = IsButtonCheckedBool(IDX_PASSWORD_USE_MASTER);
   const bool remember = IsButtonCheckedBool(IDX_PASSWORD_REMEMBER);
@@ -476,6 +482,10 @@ LONG CPasswordPage::OnApply()
         ::DeleteFileW(oldPath);
     }
   }
+
+  /* Show the path that is really used, so a folder entry is visibly resolved to
+     the file inside it. */
+  _vaultPathEdit.SetText(newPath);
 
   _oldVaultPath = us2fs(pathU);
   _oldUseMaster = newUseMaster;

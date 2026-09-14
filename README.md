@@ -50,6 +50,18 @@ column takes the rest, so a long password is readable even when the name is shor
 
 ![Passwords revealed](docs/saved-passwords-window-revealed.png)
 
+### Install
+
+Two builds are published for every release:
+
+| Build | What it is |
+|-------|------------|
+| `7z-password-vault-<version>-win64-setup.exe` | **Installer.** Asks for a folder (default `D:\7-Zip Password Vault\`), unpacks there, creates Start Menu / Desktop shortcuts and registers itself in *Apps & features* (per user, no administrator needed). Uninstall from there, or run `uninstall.cmd` in the program folder. |
+| `7z-password-vault-<version>-win64-portable.zip` | **Portable.** Unpack anywhere and run `7zFM.exe`. Nothing is written outside that folder except 7-Zip's own per-user settings in `HKCU\Software\7-Zip`. |
+
+After installing, associations and file icons are one step away: **Tools → Options →
+System**, tick `7z`, `zip`, … and press OK. A portable copy is not associated with
+anything by itself — that is what the official installer used to do.
 ### Saved-passwords window
 
 Open it with the **Saved passwords...** button in the password dialog. It stays open while you pick,
@@ -67,7 +79,7 @@ so you can compare several entries; the hint line shows which entry was filled.
 
 | Option | Meaning |
 |--------|---------|
-| Vault path (empty = default) | Custom vault file location (default `%APPDATA%\7-Zip\7zPasswordVault.dat`) |
+| Vault path (empty = default) | Custom vault file location. The default is **next to the program** (`<program folder>\7zPasswordVault.dat`), so the vault does not use space on the system drive; if the program folder cannot be written (an installation under `Program Files`), `%APPDATA%\7-Zip\7zPasswordVault.dat` is used instead, and a vault that is still there is moved next to the program on the first run. **A folder works too** — the Browse button picks one — and the vault file inside it is then used (`<folder>\7zPasswordVault.dat`); a quoted path (as Explorer copies it) is accepted as well. |
 | Browse... | Pick the vault file location |
 | Use master password (portable) | Encrypt the vault with AES-256-GCM + master password |
 | Set master password... | Set / change the master password (entered twice) |
@@ -113,6 +125,7 @@ Two suites, both plain PowerShell (no test framework):
 |-------|----------------|--------|
 | `tests\core-test.ps1` | 7-Zip's own engine through `7z.exe`: create / list / test / extract for 7z, zip and tar, AES-256 and ZipCrypto zips, header encryption, wrong passwords, damaged and truncated archives, 60+ file and long-name archives | 39 |
 | `tests\ui-test.ps1` | the vault in the real dialogs of `7zFM.exe` / `7zG.exe`: fill, edit, delete, unnamed entries, showing the password of unnamed entries, many entries, name/password collisions, awkward names, Chinese names and passwords, master-password mode, moving (copying) a vault, export/import, the settings page, plus end-to-end runs where a vault password really extracts an archive and the compress dialog really encrypts one | 266 |
+| `tests\uninstall-test.ps1` | the uninstaller, on a fake installation in `%TEMP%`: the vault is kept or deleted as asked, the settings key / per-user associations / shell-extension registration / shortcuts / folder are removed, `-WhatIf` changes nothing, and the settings backup is written. It backs up and restores `HKCU\Software\7-Zip` and the real vault itself | 20 |
 | `tests\check-labels.ps1` | measures every label of every dialog against its control and reports the ones that are cut off — run it after adding or editing a translation | 0 clipped (en) |
 
 `tests\ui-test.ps1` drives the real dialogs through Win32 messages and real mouse input:
@@ -139,6 +152,29 @@ every rebuild.
   the titles it did find, to make a language mismatch obvious.
 * It stops only the `7zFM.exe` it started, so a file manager you have open is not killed.
 
+### Uninstall
+
+The package is portable, so there is nothing in "Programs and features". Run
+`uninstall.cmd` in the program folder (or `pwsh -File uninstall.ps1`):
+
+```bat
+uninstall.cmd                 :: asks whether to keep the vault, then confirms
+uninstall.cmd -KeepVault      :: never delete the vault file
+uninstall.cmd -DeleteVault    :: delete it without asking
+uninstall.cmd -AllUsers       :: also machine-wide leftovers, needs an admin prompt
+uninstall.cmd -NoBackup       :: do not write the settings backup
+uninstall.cmd -WhatIf         :: only print what would be removed
+```
+
+It stops the `7zFM`/`7zG` processes started from that folder, removes
+`HKCU\Software\7-Zip` (the vault options and 7-Zip's own per-user settings), the
+per-user file associations and the shell-extension registration **that point at that
+folder**, shortcuts that point at it, and the folder itself. Before the settings key
+is deleted it is exported to `%TEMP%\7zip-vault-settings-<date>.reg`, because that key
+also holds the vault path, and the summary tells you how to restore it
+(`reg import "<file>"`). The vault file is the one thing you choose: keep it and a
+reinstall finds your passwords again (the settings key is recreated on the next save).
+Archives and documents are never touched.
 ### Verifying the binaries
 
 `BUILD.md` records how the release binaries are produced, what they import, and what to do
@@ -197,6 +233,17 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 
 ![显示密码](docs/saved-passwords-window-revealed.png)
 
+### 安装
+
+每个版本发布两个包：
+
+| 包 | 说明 |
+|----|------|
+| `7z-password-vault-<版本>-win64-setup.exe` | **安装版**：先选择安装目录（默认 `D:\7-Zip Password Vault\`），解包后创建开始菜单 / 桌面快捷方式，并把自己登记到「应用和功能」（当前用户，无需管理员）。卸载从那里点，或运行程序目录里的 `uninstall.cmd`。 |
+| `7z-password-vault-<版本>-win64-portable.zip` | **便携版**：解压到任意位置直接运行 `7zFM.exe`。除了 7-Zip 自己的每用户设置（`HKCU\Software\7-Zip`）之外，不往目录外写任何东西。 |
+
+安装完成后，关联与文件图标只差一步：**工具 → 选项 → 系统**，勾选 `7z`、`zip` 等，
+确定即可。便携版默认不会关联任何格式 —— 以前那是官方安装程序做的事。
 ### 已保存的密码窗口
 
 在密码对话框里点「已保存的密码...」打开。窗口**不会因为填入而关闭**，方便对比多条记录；
@@ -214,7 +261,7 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 
 | 选项 | 说明 |
 |------|------|
-| 密码库位置（留空使用默认） | 自定义密码库文件存放路径（默认 `%APPDATA%\7-Zip\7zPasswordVault.dat`） |
+| 密码库位置（留空使用默认） | 自定义密码库文件存放路径。默认放在**程序所在文件夹**（`<程序目录>\7zPasswordVault.dat`），不占用系统盘；若程序目录不可写（例如装在 `Program Files`），则退回 `%APPDATA%\7-Zip\7zPasswordVault.dat`，并且仍在旧位置的密码库会在首次运行时移动到程序目录。**也可以直接填文件夹**（「浏览...」选的就是文件夹），此时使用该文件夹里的 `7zPasswordVault.dat`；带引号的路径（从资源管理器复制来的）同样可用。 |
 | 浏览... | 选择密码库文件位置 |
 | 使用主密码加密（可移植） | 开启后用 AES-256-GCM + 主密码加密，可迁移到其它电脑 |
 | 设置主密码... | 设置 / 修改主密码（输入两次） |
@@ -260,6 +307,7 @@ MSVC（nmake）：使用 `GUI\makefile` 与 `FileManager\makefile`（已链接 `
 |------|----------|------|
 | `tests\core-test.ps1` | 通过 `7z.exe` 验证 7-Zip 引擎本身：7z / zip / tar 的创建·列表·校验·解压、AES-256 与 ZipCrypto、加密文件名、错误密码、损坏与截断压缩包、60+ 文件与超长文件名 | 39 |
 | `tests\ui-test.ps1` | 真实对话框里的密码库：填入 / 编辑 / 删除、无名称条目、未命名条目直接显示密码、多条目、名称与密码冲突、特殊名称、中文名称与中文密码、主密码模式、密码库搬家（复制到别的路径）、导出 / 导入，以及**端到端**（密码库里的密码真的解开了压缩包、压缩对话框真的加密了压缩包） | 266 |
+| `tests\uninstall-test.ps1` | 卸载程序（在 `%TEMP%` 里造一个假安装目录）：按要求保留或删除密码库，删除设置键 / 每用户关联 / 右键菜单扩展注册 / 快捷方式 / 整个目录，`-WhatIf` 不动任何东西，并写出设置备份。测试自身会备份并还原 `HKCU\Software\7-Zip` 与真实密码库 | 20 |
 | `tests\check-labels.ps1` | 逐一测量每个对话框中每个标签的文本宽度与控件宽度，报告被截断的标签 —— 新增或修改翻译后应运行 | 英文 0 处截断 |
 
 `tests\ui-test.ps1` 通过 Win32 消息与真实鼠标输入驱动真实对话框：
@@ -323,6 +371,26 @@ make -f ../../cmpl_gcc.mak
 - 读取时会校验条数、名称长度、密文长度与 PBKDF2 迭代次数，避免损坏文件导致巨额内存分配或长时间卡死。
 - 主密码、派生密钥、明文缓冲在使用后会被**主动清零**。
 
+### 卸载
+
+本包是便携版，不会出现在「程序和功能」里。运行程序目录下的 `uninstall.cmd`
+（或 `pwsh -File uninstall.ps1`）：
+
+```bat
+uninstall.cmd                 :: 先问是否保留密码库，再确认一次
+uninstall.cmd -KeepVault      :: 一定保留密码库文件
+uninstall.cmd -DeleteVault    :: 直接删除密码库，不再询问
+uninstall.cmd -AllUsers       :: 连机器级残留一起清（需要管理员）
+uninstall.cmd -NoBackup       :: 不写设置备份
+uninstall.cmd -WhatIf         :: 只打印将删除什么，不动手
+```
+
+它会结束从该目录启动的 `7zFM`/`7zG` 进程、删除 `HKCU\Software\7-Zip`（密码库选项
+与 7-Zip 自身的每用户设置）、**指向该目录的**每用户文件关联与右键菜单扩展注册、
+指向它的快捷方式，最后删掉整个目录。删除设置键之前会先把它导出到
+`%TEMP%\7zip-vault-settings-<日期>.reg`（该键里也存着密码库路径），结尾会打印文件位置与
+恢复命令 `reg import "<文件>"`。唯一由你决定的是密码库文件：保留它，重新安装后密码还在
+（设置键会在下一次保存时自动重建）。压缩包和文档等数据一律不动。
 ### 校验二进制 / 误报处理
 
 `BUILD.md` 记录了发布包里两个 exe 的构建方式、导入的 DLL，以及「被修改且未签名的

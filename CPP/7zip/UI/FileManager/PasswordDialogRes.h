@@ -91,3 +91,6 @@
 #define IDT_PASSWORD_ERR_KDF            3858
 #define IDT_PASSWORD_ERR_MASTER         3859
 #define IDT_PASSWORD_ERR_RANDOM         3860
+
+/* shown once when an old vault is moved next to the program (portable default) */
+#define IDT_PASSWORD_MOVED_TO_PORTABLE  3861

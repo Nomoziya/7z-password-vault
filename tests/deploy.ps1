@@ -11,7 +11,9 @@ $copies = @(
   @{ src = "Lang\zh-cn.txt";                        dst = "Lang\zh-cn.txt" },
   @{ src = "Lang\zh-tw.txt";                        dst = "Lang\zh-tw.txt" },
   @{ src = "README.md";                             dst = "README.md" },
-  @{ src = "BUILD.md";                              dst = "BUILD.md" }
+  @{ src = "BUILD.md";                              dst = "BUILD.md" },
+  @{ src = "tools\uninstall.ps1";                   dst = "uninstall.ps1" },
+  @{ src = "tools\uninstall.cmd";                   dst = "uninstall.cmd" }
 )
 foreach ($c in $copies) {
   $from = Join-Path $root $c.src

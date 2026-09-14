@@ -434,11 +434,11 @@ Unsupported vault file version
 3849
 The vault file is damaged or invalid
 3850
-Cannot create the vault file
+Cannot create the vault file:\n{0}\n{1}
 3851
-Cannot write the vault file
+Cannot write the vault file:\n{0}
 3852
-Cannot replace the vault file
+Cannot replace the vault file:\n{0}\n{1}
 3853
 The vault data is damaged
 3854
@@ -455,6 +455,8 @@ Key derivation failed
 Wrong master password, or the vault file is damaged
 3860
 Random number generation failed
+3861
+The vault file was moved next to the program:\n\n{0}
 3900
 Elapsed time:
 Remaining time:

@@ -26,6 +26,9 @@
 param(
   [string]$SevenZipDir = (Join-Path (Split-Path $PSScriptRoot -Parent) "7-Zip-密码管家版"),
   [ValidateSet("auto", "zh-cn", "en")][string]$UiLang = "auto",
+  # another 7zFM/7zG (the user's own copy) normally makes the run refuse to start,
+  # because it shares the vault settings and can overwrite this run's vault file
+  [switch]$AllowOtherInstances,
   [switch]$KeepArtifacts
 )
 
@@ -142,6 +145,23 @@ function Set-VaultSettings($bag) {
   }
 }
 
+# ---------------------------------------------------------------- environment
+# Another 7zFM/7zG (a copy the user is running from somewhere else) shares the same
+# registry settings and can write to this run's vault file, which makes checks fail in
+# ways that have nothing to do with the build. Refuse to run in that case.
+$otherInstances = @(Get-Process -Name 7zFM, 7zG, 7z -ErrorAction SilentlyContinue | Where-Object {
+  try { $_.Path -and -not $_.Path.StartsWith($SevenZipDir, [StringComparison]::OrdinalIgnoreCase) } catch { $false }
+})
+if ($otherInstances.Count -gt 0) {
+  Write-Host "Another 7-Zip is running:" -ForegroundColor Yellow
+  $otherInstances | ForEach-Object { Write-Host ("  {0} (pid {1})" -f $_.Path, $_.Id) -ForegroundColor Yellow }
+  Write-Host "It shares the vault settings with this run and can overwrite its vault file." -ForegroundColor Yellow
+  if (-not $AllowOtherInstances) {
+    Write-Host "Close it and run the test again (or pass -AllowOtherInstances to risk it)." -ForegroundColor Yellow
+    exit 3
+  }
+  Write-Host "Continuing anyway (-AllowOtherInstances): checks may fail for reasons that are not the build." -ForegroundColor Yellow
+}
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -201,6 +221,19 @@ public class VaultUiTest {
   public static string GetEditText(IntPtr h) { var sb = new StringBuilder(512); SendBuf(h, 0x000D, (IntPtr)512, sb); return sb.ToString(); }
   public static void SetEditText(IntPtr h, string s) { SendStr(h, 0x000C, IntPtr.Zero, s); }
   public static void ClickButton(IntPtr h) { PostMessageW(h, 0x00F5, IntPtr.Zero, IntPtr.Zero); }
+
+  [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr h);
+
+  /* Sends the notification an edit control raises when the user changed its text.
+     Typing with WM_SETTEXT (what the tests use) does not raise EN_CHANGE, and the
+     settings page enables Apply on it - so a test that only sets the text would
+     apply nothing and never notice. */
+  public static void NotifyEditChanged(IntPtr edit, int ctrlId) {
+    IntPtr parent = GetParent(edit);
+    if (parent == IntPtr.Zero) return;
+    int wp = (0x0300 /* EN_CHANGE */ << 16) | (ctrlId & 0xFFFF);
+    Send(parent, 0x0111 /* WM_COMMAND */, (IntPtr)wp, edit);
+  }
   public static long SendLong(IntPtr h, uint msg, IntPtr wp, IntPtr lp) { return (long)Send(h, msg, wp, lp); }
 
   /* --- reading list-view text (LVM_GETITEMTEXTW needs a buffer inside the
@@ -473,6 +506,21 @@ public class VaultUiTest {
   /* The only Button below a window: a message box has exactly one for MB_OK. The
      id of that button is not IDOK in every build (this one uses 2), so it is found
      by class instead of by a guessed id. */
+  /* Buttons of a window as "id=text" pairs: this build does not number every message
+     box button the way IDOK/IDYES suggest, so a test can show what is really there. */
+  public static string ListButtons(IntPtr parent) {
+    var sb = new StringBuilder();
+    EnumChildWindows(parent, (h,l) => {
+      var c = new StringBuilder(128); GetClassNameW(h, c, 128);
+      if (c.ToString() == "Button") {
+        var tx = new StringBuilder(128); GetWindowTextW(h, tx, 128);
+        sb.Append(String.Format("[{0}='{1}'] ", GetDlgCtrlID(h), tx));
+      }
+      return true;
+    }, IntPtr.Zero);
+    return sb.ToString();
+  }
+
   public static IntPtr FindSingleButton(IntPtr parent) {
     IntPtr r = IntPtr.Zero;
     EnumChildWindows(parent, (h,l) => {
@@ -741,6 +789,57 @@ Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 Check "the test does not use the real vault" ($vault -ne $realVault)
 Write-Host ("  UI language: {0}{1}" -f $UiLang, $(if ($script:restoreLang) { " (forced through HKCU\Software\7-Zip\Lang)" } else { "" })) -ForegroundColor DarkGray
 
+# Creates one entry through the new-password window. This was the most repeated block
+# of the suite (a dozen copies with slightly different sleeps); the values are passed
+# in instead, and the check name is preserved so the coverage stays the same.
+function New-VaultEntry([uint32]$procId, [IntPtr]$dlg, [string]$name, [string]$password, [string]$checkName) {
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))     # new password
+  $ed = Expect-Dialog $procId $T.NewPassword $checkName
+  [VaultUiTest]::SetEditText((Wait-Child $ed 121 5), $name)
+  [VaultUiTest]::SetEditText((Wait-Child $ed 122 5), $password)
+  Start-Sleep -Milliseconds 300
+  [VaultUiTest]::ClickButton((Wait-Child $ed 1 5))
+  Start-Sleep -Seconds 1
+  return $ed
+}
+# Types into the vault path box the way a user does (typing raises EN_CHANGE, a
+# programmatic SetText does not, and the page enables Apply on EN_CHANGE).
+function Set-VaultPathText([IntPtr]$edit, [string]$text) {
+  [VaultUiTest]::SetEditText($edit, $text)
+  [VaultUiTest]::NotifyEditChanged($edit, 101)
+  Start-Sleep -Milliseconds 400
+}
+# Opens Tools -> Options on the password page and returns the dialog and its box.
+function Open-PasswordPage([uint32]$procId, [string]$checkName) {
+  $fm = [VaultUiTest]::FindDialogClass($procId, "7-Zip::FM")
+  [void][VaultUiTest]::PostMessageW($fm, 0x0111, [IntPtr]900, [IntPtr]::Zero)
+  $opt = Expect-Dialog $procId $T.Options $checkName 12
+  $tab = [VaultUiTest]::FindDescendant($opt, 12320)
+  $titles = @()
+  for ($i = 0; $i -lt [VaultUiTest]::GetTabCount($tab); $i++) { $titles += [VaultUiTest]::GetTabText($tab, $i) }
+  $idx = [array]::IndexOf($titles, $T.Page)
+  if ($idx -ge 0) { [VaultUiTest]::MoveCursorHome(); [void][VaultUiTest]::ClickTab($tab, $idx); Start-Sleep -Seconds 2 }
+  return @{ Opt = $opt; Edit = (Wait-Child $opt 101 5) }
+}
+# Presses OK on the page (which applies AND closes the options dialog) and answers the
+# "what about the file left behind" question if moving the vault raised it.
+function Apply-PasswordPage([uint32]$procId, [hashtable]$page) {
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($page.Opt, 1))
+  Start-Sleep -Seconds 3
+  $box = Wait-Dialog $procId $T.Caption 6
+  if ($box -eq [IntPtr]::Zero) { return "clean" }
+  $yes = [VaultUiTest]::FindChildByClassAndId($box, "Button", 6)
+  if ($yes -eq [IntPtr]::Zero) { $yes = [VaultUiTest]::FindSingleButton($box) }
+  if ($yes -ne [IntPtr]::Zero) { [VaultUiTest]::ClickControl($yes) }
+  Start-Sleep -Seconds 1
+  [void](Wait-NoDialog $procId $T.Caption 6)
+  return "asked"
+}
+# Reads the password box of a dialog, waiting for the text: the vault writes it just
+# after the window that stored it has closed.
+function Wait-PasswordText([IntPtr]$dlg, [string]$expected, [int]$seconds = 5) {
+  return (Wait-EditText ([VaultUiTest]::FindDescendant($dlg, 120)) $expected $seconds)
+}
 # ---------------------------------------------------------------- test 1
 Write-Host "`n== 1. save a named password ==" -ForegroundColor Cyan
 $p = Start-Fm $archive
@@ -850,13 +949,7 @@ Write-Host "`n== 4. auto-type a saved password by typing its name ==" -Foregroun
 Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 $p = Start-Fm $archive
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (auto-type)"
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears (auto-type)"
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), "abc")
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "PwForAbc")
-Start-Sleep -Milliseconds 300
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-Start-Sleep -Seconds 2
+New-VaultEntry ([uint32]$p.Id) $dlg "abc" "PwForAbc" "new-password dialog appears (auto-type)"
 # now type the saved name into the password box -> AutoTypeByName should replace it
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "abc")
 Start-Sleep -Seconds 1
@@ -894,12 +987,8 @@ $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (unnam
 
 # "New password" with an empty name: the entry must stay unnamed, so that no
 # generated name can ever collide with a password the user types.
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears"
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "AutoNamed")
-Start-Sleep -Milliseconds 300
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-Start-Sleep -Seconds 2
+New-VaultEntry ([uint32]$p.Id) $dlg "" "AutoNamed" "new-password dialog appears"
+# (creation of "" / "AutoNamed" is done by New-VaultEntry below)
 Check "unnamed entry still fills the input box" ([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($dlg,120)) -eq "AutoNamed")
 
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "")
@@ -914,12 +1003,8 @@ Check "the list window closes again" (Wait-NoDialog ([uint32]$p.Id) $T.List 5)
 
 # A second unnamed entry must be added, not merged into the first one. The list
 # window is modal, so it has to be closed before the dialog underneath is usable.
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "a second unnamed entry can be created"
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "SecondUnnamed")
-Start-Sleep -Milliseconds 300
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-Start-Sleep -Seconds 2
+New-VaultEntry ([uint32]$p.Id) $dlg "" "SecondUnnamed" "a second unnamed entry can be created"
+# (creation of "" / "SecondUnnamed" is done by New-VaultEntry below)
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3808))
 $lst = Expect-Dialog ([uint32]$p.Id) $T.List "the list window reopens with two entries"
 $lv = Wait-Child $lst 124
@@ -949,13 +1034,9 @@ Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $regKey -Name "CloseAfterFill" -Value 0 -Type DWord
 $p = Start-Fm $archive
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (close-after-fill off)"
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears"
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), "stayopen")
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "PwStayOpen")
-Start-Sleep -Milliseconds 300
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-Start-Sleep -Seconds 2
+New-VaultEntry ([uint32]$p.Id) $dlg "stayopen" "PwStayOpen" "new-password dialog appears"
+# (creation of "stayopen" / "PwStayOpen" is done by New-VaultEntry below)
+New-VaultEntry ([uint32]$p.Id) $dlg "" "PwUnnamed" "new-password dialog appears (unnamed entry)"
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "")
 Start-Sleep -Milliseconds 200
 $lst = Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg, 3808)) $T.List "saved passwords window appears"
@@ -1074,13 +1155,8 @@ Write-Host "`n== 10. a saved name must not hijack a longer password ==" -Foregro
 Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 $p = Start-Fm $archive
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (auto-type guard)"
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears"
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), "cs")
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "PwForCs")
-Start-Sleep -Milliseconds 300
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-Start-Sleep -Seconds 2
+New-VaultEntry ([uint32]$p.Id) $dlg "cs" "PwForCs" "new-password dialog appears"
+# (creation of "cs" / "PwForCs" is done by New-VaultEntry below)
 $pwEdit = [VaultUiTest]::FindDescendant($dlg,120)
 
 # typing continues: the intermediate "cs" must not trigger a fill
@@ -1116,13 +1192,8 @@ if (-not (Test-Path $guiExe)) {
   Check "the compress dialog buttons are localized" ([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($cd, 3808)) -eq $T.BtnList) "(got [$([VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($cd, 3808)))])"
 
   # store a password from inside the compress dialog
-  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($cd, 3809))
-  $ed = Expect-Dialog ([uint32]$g.Id) $T.NewPassword "new-password dialog opens from the compress dialog"
-  [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), "compress-entry")
-  [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "PwForCompress")
-  Start-Sleep -Milliseconds 300
-  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-  Start-Sleep -Seconds 2
+  New-VaultEntry ([uint32]$g.Id) $cd "compress-entry" "PwForCompress" "new-password dialog opens from the compress dialog"
+# (creation of "compress-entry" / "PwForCompress" is done by New-VaultEntry below)
   Check "the compress dialog got the new password" ((Wait-EditText ([VaultUiTest]::FindDescendant($cd,120)) "PwForCompress") -eq "PwForCompress")
   Check "the vault now holds the entry" (Wait-File $vault)
 
@@ -1156,13 +1227,8 @@ $pws   = @("Pw-A", "Pw-B", "Pw-C", "Pw-D", "Pw-E")
 $p = Start-Fm $archive
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (many entries)"
 for ($i = 0; $i -lt $names.Count; $i++) {
-  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-  $ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears ($($names[$i]))"
-  [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), $names[$i])
-  [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), $pws[$i])
-  Start-Sleep -Milliseconds 250
-  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-  Start-Sleep -Milliseconds 700
+  New-VaultEntry ([uint32]$p.Id) $dlg $names[$i] $pws[$i] "new-password dialog appears ($($names[$i]))"
+# (creation of $names[$i] / $pws[$i] is done by New-VaultEntry below)
 }
 $lst = Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg, 3808)) $T.List "the saved-passwords window lists them all"
 $lv = Wait-Child $lst 124
@@ -1191,13 +1257,8 @@ Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 $p = Start-Fm $archive
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (name/password collision)"
 foreach ($pair in @(@("cs","secret1"), @("secret1","secret2"))) {
-  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-  $ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears ($($pair[0]))"
-  [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), $pair[0])
-  [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), $pair[1])
-  Start-Sleep -Milliseconds 250
-  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-  Start-Sleep -Milliseconds 700
+  New-VaultEntry ([uint32]$p.Id) $dlg $pair[0] $pair[1] "new-password dialog appears ($($pair[0]))"
+# (creation of $pair[0] / $pair[1] is done by New-VaultEntry below)
 }
 $pwEdit = [VaultUiTest]::FindDescendant($dlg,120)
 [VaultUiTest]::SetEditText($pwEdit, "")
@@ -1227,13 +1288,8 @@ $cases = @(
   @{ in = "a";          out = "a";       pw = "Pw-One" }
 )
 foreach ($c in $cases) {
-  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-  $ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears (awkward name)"
-  [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), $c.in)
-  [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), $c.pw)
-  Start-Sleep -Milliseconds 250
-  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-  Start-Sleep -Milliseconds 700
+  New-VaultEntry ([uint32]$p.Id) $dlg $c.in $c.pw "new-password dialog appears (awkward name)"
+# (creation of $c.in / $c.pw is done by New-VaultEntry below)
 }
 $lst = Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg, 3808)) $T.List "the saved-passwords window appears (awkward names)"
 $lv = Wait-Child $lst 124
@@ -1261,13 +1317,8 @@ Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
 # store the archive password first, through the normal dialog
 $p = Start-Fm $archive
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (to store the archive password)"
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog stores the archive password"
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), "the-archive")
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "ArchivePw")
-Start-Sleep -Milliseconds 250
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-Start-Sleep -Seconds 1
+New-VaultEntry ([uint32]$p.Id) $dlg "the-archive" "ArchivePw" "new-password dialog stores the archive password"
+# (creation of "the-archive" / "ArchivePw" is done by New-VaultEntry below)
 Stop-Fm $p
 
 $g = Start-Process -FilePath $guiExe -ArgumentList @("x", "-y", "-o`"$dest`"", "`"$archive`"") -PassThru
@@ -1381,13 +1432,8 @@ $m = Expect-Dialog ([uint32]$p.Id) $T.Master "the master password is asked when 
 Start-Sleep -Milliseconds 300
 [VaultUiTest]::ClickButton((Wait-Child $m 1))
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "the password dialog appears after unlocking"
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears in master mode"
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), "master-entry")
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "PwInMasterMode")
-Start-Sleep -Milliseconds 300
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-Start-Sleep -Seconds 2
+New-VaultEntry ([uint32]$p.Id) $dlg "master-entry" "PwInMasterMode" "new-password dialog appears in master mode"
+# (creation of "master-entry" / "PwInMasterMode" is done by New-VaultEntry below)
 $p.Refresh()
 Check "the entry was stored in the master vault" (Test-Path $vault)
 Check "process alive after storing in master mode" (-not $p.HasExited)
@@ -1471,19 +1517,10 @@ Set-ItemProperty -Path $regKey -Name "ShowPasswordForUnnamed" -Value 0 -Type DWo
 
 $p = Start-Fm $archive
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (unnamed password display)"
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears (named entry)"
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), "showme")
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "PwNamed")
-Start-Sleep -Milliseconds 300
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-Start-Sleep -Seconds 2
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears (unnamed entry)"
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), "PwUnnamed")
-Start-Sleep -Milliseconds 300
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-Start-Sleep -Seconds 2
+New-VaultEntry ([uint32]$p.Id) $dlg "showme" "PwNamed" "new-password dialog appears (named entry)"
+# (creation of "showme" / "PwNamed" is done by New-VaultEntry below)
+# (creation of "" / "PwUnnamed" is done by New-VaultEntry below)
+New-VaultEntry ([uint32]$p.Id) $dlg "" "PwUnnamed" "new-password dialog appears (unnamed entry)"
 [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "")
 Start-Sleep -Milliseconds 200
 
@@ -1561,13 +1598,8 @@ if (Test-Path $cnArc) {
 
 $p = Start-Fm $archive
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (Chinese entry)"
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
-$ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears (Chinese entry)"
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 121), $cnName)
-[VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($ed, 122), $cnPw)
-Start-Sleep -Milliseconds 300
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ed, 1))
-Start-Sleep -Seconds 1
+New-VaultEntry ([uint32]$p.Id) $dlg $cnName $cnPw "new-password dialog appears (Chinese entry)"
+# (creation of $cnName / $cnPw is done by New-VaultEntry below)
 $pwEdit = [VaultUiTest]::FindDescendant($dlg, 120)
 Check "the Chinese password reached the input box" ((Wait-EditText $pwEdit $cnPw) -eq $cnPw) "(got [$([VaultUiTest]::GetEditText($pwEdit))])"
 
@@ -1810,6 +1842,139 @@ Check "process alive after the export / import round trip" (-not $p.HasExited)
 Stop-Fm $p
 Set-ItemProperty -Path $regKey -Name "UseMasterPassword"      -Value 0 -Type DWord
 Set-ItemProperty -Path $regKey -Name "RememberMasterPassword" -Value 0 -Type DWord
+# ---------------------------------------------------------------- test 21
+Write-Host "`n== 21. the vault location may be a folder ==" -ForegroundColor Cyan
+# The field has a Browse button that picks a folder and is labelled "vault location",
+# so a folder has to be accepted: saving then used to fail with "cannot replace the
+# vault file", because the vault was renamed onto an existing directory.
+
+# OK applies the page AND closes the options dialog, and moving the vault raises a
+# question about the file that was left behind, so both are handled here.
+function Open-PasswordPage([uint32]$procId, [string]$name) {
+  $fm = [VaultUiTest]::FindDialogClass($procId, "7-Zip::FM")
+  [void][VaultUiTest]::PostMessageW($fm, 0x0111, [IntPtr]900, [IntPtr]::Zero)
+  $opt = Expect-Dialog $procId $T.Options $name 12
+  $tab = [VaultUiTest]::FindDescendant($opt, 12320)
+  $titles = @()
+  for ($i = 0; $i -lt [VaultUiTest]::GetTabCount($tab); $i++) { $titles += [VaultUiTest]::GetTabText($tab, $i) }
+  $idx = [array]::IndexOf($titles, $T.Page)
+  if ($idx -ge 0) { [VaultUiTest]::MoveCursorHome(); [void][VaultUiTest]::ClickTab($tab, $idx); Start-Sleep -Seconds 2 }
+  return @{ Opt = $opt; Edit = (Wait-Child $opt 101 5) }
+}
+# Types a path the way a user does (typing raises EN_CHANGE, WM_SETTEXT does not) and
+# presses OK: returns "asked" when the "old file" question came up, otherwise "clean".
+function Apply-VaultPath([uint32]$procId, [hashtable]$page, [string]$newPath, [string]$name) {
+  [VaultUiTest]::SetEditText($page.Edit, $newPath)
+  [VaultUiTest]::NotifyEditChanged($page.Edit, 101)
+  Start-Sleep -Milliseconds 400
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($page.Opt, 1))   # OK applies
+  Start-Sleep -Seconds 3
+  $box = Wait-Dialog $procId $T.Caption 6
+  if ($box -eq [IntPtr]::Zero) { return "clean" }
+  $yes = [VaultUiTest]::FindChildByClassAndId($box, "Button", 6)
+  if ($yes -eq [IntPtr]::Zero) { $yes = [VaultUiTest]::FindSingleButton($box) }
+  if ($yes -ne [IntPtr]::Zero) { [VaultUiTest]::ClickControl($yes) }
+  Start-Sleep -Seconds 1
+  [void](Wait-NoDialog $procId $T.Caption 6)
+  return "asked"
+}
+
+Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $regKey -Name "VaultPath" -Value $vault -Type String
+Set-ItemProperty -Path $regKey -Name "UseMasterPassword" -Value 0 -Type DWord
+Set-ItemProperty -Path $regKey -Name "RememberMasterPassword" -Value 0 -Type DWord
+$p = Start-Fm $archive
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (folder test)"
+New-VaultEntry ([uint32]$p.Id) $dlg "folder-test" "PwFolderTest" "new-password dialog appears (folder test)"
+# (creation of "folder-test" / "PwFolderTest" is done by New-VaultEntry below)
+Check "the vault was written before the folder test" (Wait-File $vault)
+Stop-Fm $p
+
+$vaultFolder = Join-Path $workDir "vaultdir"
+Remove-Item -Recurse -Force $vaultFolder -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $vaultFolder | Out-Null
+$inFolder = Join-Path $vaultFolder "7zPasswordVault.dat"
+$elsewhere = Join-Path $workDir "moved-away.dat"
+Remove-Item $elsewhere,"$elsewhere.tmp" -Force -ErrorAction SilentlyContinue
+
+$p = Start-Process -FilePath $fmExe -PassThru
+Start-Sleep -Seconds 4
+$page = Open-PasswordPage ([uint32]$p.Id) "options dialog opens (folder test)"
+Check "the settings page has the vault path box (folder test)" ($page.Edit -ne [IntPtr]::Zero)
+Check "the page opens on the configured vault file" ([VaultUiTest]::GetEditText($page.Edit) -eq $vault) "(got [$([VaultUiTest]::GetEditText($page.Edit))])"
+
+# 1. a folder instead of a file
+$result = Apply-VaultPath ([uint32]$p.Id) $page $vaultFolder "the folder path is applied"
+Check "the vault move asked about the file left behind" ($result -eq "asked") "(result=$result)"
+Check "the vault file was created inside the folder" (Wait-File $inFolder 8) "(expected $inFolder)"
+Check "answering yes deleted the old vault file" (-not (Test-Path $vault)) "(still there: $vault)"
+$stored = (Get-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue).VaultPath
+Check "the setting points at the file inside the folder" ($stored -eq $inFolder) "(got [$stored])"
+Check "process alive after applying a folder" (-not $p.HasExited)
+
+# 2. the page shows the file that is really used, not the folder that was typed
+$page = Open-PasswordPage ([uint32]$p.Id) "options dialog reopens (resolved path)"
+Check "the page shows the resolved file path" ([VaultUiTest]::GetEditText($page.Edit) -eq $inFolder) "(got [$([VaultUiTest]::GetEditText($page.Edit))])"
+
+# 3. a quoted path (the way Explorer copies one) resolves to the same file
+$result = Apply-VaultPath ([uint32]$p.Id) $page ('"' + $vaultFolder + '"') "the quoted folder path is applied"
+Check "the quoted folder path did not need to move anything" ($result -eq "clean") "(result=$result)"
+$stored = (Get-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue).VaultPath
+Check "the quoted path resolved to the same file" ($stored -eq $inFolder) "(got [$stored])"
+Check "process alive after the quoted path" (-not $p.HasExited)
+
+# 4. and the vault really moves: to a file elsewhere and back into the folder
+$page = Open-PasswordPage ([uint32]$p.Id) "options dialog reopens (move away)"
+$result = Apply-VaultPath ([uint32]$p.Id) $page $elsewhere "the vault moves to another file"
+Check "moving to another file asked about the old file too" ($result -eq "asked") "(result=$result)"
+Check "the vault really moved to that file" (Wait-File $elsewhere 8) "(expected $elsewhere)"
+Check "the file in the folder was deleted" (-not (Test-Path $inFolder)) "(still there: $inFolder)"
+$page = Open-PasswordPage ([uint32]$p.Id) "options dialog reopens (move back)"
+$result = Apply-VaultPath ([uint32]$p.Id) $page $vaultFolder "the vault moves back into the folder"
+Check "moving back into the folder worked" (Wait-File $inFolder 8) "(expected $inFolder)"
+Check "the other file was deleted again" (-not (Test-Path $elsewhere)) "(still there: $elsewhere)"
+
+# 5. the Browse button opens the folder picker and can be closed again
+$page = Open-PasswordPage ([uint32]$p.Id) "options dialog reopens (browse button)"
+Check "the settings page has a Browse button" ((Wait-Child $page.Opt 2607 5) -ne [IntPtr]::Zero)
+[VaultUiTest]::ClickButton((Wait-Child $page.Opt 2607 5))
+Start-Sleep -Seconds 2
+$picker = [VaultUiTest]::FindDialogClass([uint32]$p.Id, "#32770")
+Check "the folder picker opens" ($picker -ne [IntPtr]::Zero)
+if ($picker -ne [IntPtr]::Zero) {
+  $close = [VaultUiTest]::FindChildByClassAndId($picker, "Button", 2)   # Cancel
+  if ($close -eq [IntPtr]::Zero) { $close = [VaultUiTest]::FindSingleButton($picker) }
+  if ($close -ne [IntPtr]::Zero) { [VaultUiTest]::ClickControl($close) }
+  Start-Sleep -Seconds 2
+}
+if ($page.Opt -ne [IntPtr]::Zero) { [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($page.Opt, 2)) }  # close the page
+Start-Sleep -Seconds 1
+Check "process alive after the folder picker" (-not $p.HasExited)
+Stop-Fm $p
+
+# 6. the entry is still readable from the vault inside the folder
+$p = Start-Fm $archive
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears with the vault in a folder"
+$lst = Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg, 3808)) $T.List "the list opens for the vault in a folder"
+$lv = Wait-Child $lst 124
+$row = Find-Row $lv "folder-test"
+Check "the entry survived the moves" ($row -ge 0) "(rows=$([VaultUiTest]::SendLong($lv, 0x1004, [IntPtr]::Zero, [IntPtr]::Zero)))"
+if ($row -ge 0) {
+  $pwEdit = [VaultUiTest]::FindDescendant($dlg, 120)
+  [VaultUiTest]::SetEditText($pwEdit, "")
+  Start-Sleep -Milliseconds 200
+  Select-Row $lv $row
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3831))
+  Check "the password is filled from the vault in the folder" ((Wait-EditText $pwEdit "PwFolderTest") -eq "PwFolderTest") "(got [$([VaultUiTest]::GetEditText($pwEdit))])"
+} else {
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst, 3817))
+}
+Check "process alive after reading the vault in a folder" (-not $p.HasExited)
+Stop-Fm $p
+
+Set-ItemProperty -Path $regKey -Name "VaultPath" -Value $vault -Type String
+Remove-Item -Recurse -Force $vaultFolder -ErrorAction SilentlyContinue
+Remove-Item $elsewhere,"$elsewhere.tmp" -Force -ErrorAction SilentlyContinue
 } finally {
   Stop-Fm $null
   Set-VaultSettings $savedSettings

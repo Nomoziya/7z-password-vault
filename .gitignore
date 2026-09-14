@@ -3,6 +3,7 @@
 
 # 发布包
 /*.zip
+/dist/
 
 # VirusTotal API key（本地文件，绝不可入库）
 /.vt-key.txt

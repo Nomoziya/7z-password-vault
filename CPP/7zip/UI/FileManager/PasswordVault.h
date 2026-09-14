@@ -13,6 +13,14 @@
 
 #include "PasswordDialogRes.h"
 
+/* The configured location may point at a folder: the settings page has a Browse
+   button that picks a folder, and the field is labelled "vault location". A folder
+   means "keep the vault file in this folder", so the file name is appended - without
+   this, saving over a folder made MoveFileEx fail with "cannot replace the vault
+   file". A quoted path (pasted from Explorer) is unquoted, and surrounding spaces are
+   trimmed. Anything else is returned unchanged, so a plain file path stays a file. */
+UString PasswordVault_NormalizePath(const UString &path);
+
 struct CPasswordVaultEntry
 {
   UString Name;
@@ -34,7 +42,7 @@ class CPasswordVault
   bool ParseEntries(const Byte *data, size_t size, UString &errorMessage);
 
 public:
-  void SetPath(const UString &path) { _path = path; }
+  void SetPath(const UString &path) { _path = PasswordVault_NormalizePath(path); }
   const UString &GetPath() const { return _path; }
 
   CObjectVector<CPasswordVaultEntry> &Entries() { return _entries; }
@@ -42,6 +50,12 @@ public:
 
   static UString GetDefaultPath();
   static UString GetConfiguredPath();
+
+  /* The default location is the program folder (portable), so the vault does not
+     take space on the system drive. Called once before the vault is loaded: when no
+     path is configured and a vault still sits in %APPDATA%\7-Zip, that file is moved
+     next to the program. Returns the message to show, or an empty string. */
+  static UString AdoptPortableDefault();
 
   // parent is used only to show the master-password prompt when needed.
   bool Load(HWND parent, UString &errorMessage);
