@@ -100,8 +100,20 @@ $script:pass = 0
 $script:fail = 0
 function Check([string]$name, [bool]$ok, [string]$extra = "") {
   if ($ok) { $script:pass++; Write-Host ("  [PASS] " + $name) -ForegroundColor Green }
-  else     { $script:fail++; Write-Host ("  [FAIL] " + $name + " " + $extra) -ForegroundColor Red }
+  else {
+    $script:fail++
+    Write-Host ("  [FAIL] " + $name + " " + $extra) -ForegroundColor Red
+    if (-not $script:dumpShown) {
+      # the first failure explains itself: every dialog of every running 7-Zip with its
+      # controls (id, class, style, text). Only once, so the log stays readable.
+      $script:dumpShown = $true
+      Write-Host "  ---- windows of the running 7-Zip processes ----" -ForegroundColor DarkYellow
+      Write-Host ([VaultUiTest]::DumpAllDialogs()) -ForegroundColor DarkYellow
+      Write-Host "  ------------------------------------------------" -ForegroundColor DarkYellow
+    }
+  }
 }
+$script:dumpShown = $false
 
 # Substring search over raw bytes: proves that a name or password is really absent
 # from the vault file, in the encodings a leaked string would use.
@@ -508,6 +520,38 @@ public class VaultUiTest {
      by class instead of by a guessed id. */
   /* Buttons of a window as "id=text" pairs: this build does not number every message
      box button the way IDOK/IDYES suggest, so a test can show what is really there. */
+  /* Every window of every running 7-Zip process with its children: printed when a
+     check fails, so the reason is visible without another run. A stale handle, a
+     rebuilt dialog or a control that never got its text all become obvious. */
+  [DllImport("user32.dll")] public static extern int GetWindowLongW(IntPtr h, int index);
+  public static string DumpAllDialogs() {
+    var sb = new StringBuilder();
+    foreach (var proc in System.Diagnostics.Process.GetProcesses()) {
+      string name = "";
+      try { name = proc.ProcessName; } catch { }
+      if (!name.StartsWith("7z", StringComparison.OrdinalIgnoreCase)) continue;
+      uint pid = (uint)proc.Id;
+      EnumWindows((h,l) => {
+        uint p; GetWindowThreadProcessId(h, out p);
+        if (p != pid) return true;
+        var c = new StringBuilder(64); GetClassNameW(h, c, 64);
+        if (c.ToString() != "#32770") return true;
+        var tx = new StringBuilder(256); GetWindowTextW(h, tx, 256);
+        sb.Append(String.Format("      {0}(pid {1}) [{2}]", tx, pid, h));
+        EnumChildWindows(h, (ch,cl) => {
+          var cc = new StringBuilder(64); GetClassNameW(ch, cc, 64);
+          var ct = new StringBuilder(256); GetWindowTextW(ch, ct, 256);
+          long style = GetWindowLongW(ch, -16 /*GWL_STYLE*/);
+          sb.Append(String.Format("\n        id={0,-6} {1,-12} style=0x{2:X8} text=[{3}]",
+            GetDlgCtrlID(ch), cc, style, ct));
+          return true;
+        }, IntPtr.Zero);
+        sb.Append("\n");
+        return true;
+      }, IntPtr.Zero);
+    }
+    return sb.ToString();
+  }
   public static string ListButtons(IntPtr parent) {
     var sb = new StringBuilder();
     EnumChildWindows(parent, (h,l) => {
@@ -768,9 +812,71 @@ function Wait-FileSize([string]$path, [int]$seconds = 5) {
 }
 
 $savedSettings = Get-VaultSettings
+# ---------------------------------------------------------------- isolation
+# The settings live in one registry key that the product writes and the real vault is a
+# file of the user. Both are snapshotted here: a registry hive export (subkeys and value
+# types included) and a copy of the vault file. The snapshot is restored in the finally
+# block, and - more important - at the start of the next run, so a run that is killed
+# cannot leave the user's 7-Zip pointing at a temporary file.
+$stateFile = Join-Path $env:TEMP "7zpw-test-state.json"
+$realVaultBackup = Join-Path $env:TEMP "7zpw-real-vault-backup.dat"
+$hiveBackup = Join-Path $env:TEMP "7zpw-7zip-settings.hiv"
+$realVaultEarly = Join-Path $env:APPDATA "7-Zip\7zPasswordVault.dat"
+
+function Restore-PreviousRun {
+  if (-not (Test-Path -LiteralPath $stateFile)) { return }
+  Write-Host "A previous run did not finish: restoring its snapshot first." -ForegroundColor Yellow
+  try {
+    $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+    if ($state.hive -and (Test-Path -LiteralPath $state.hive)) {
+      Remove-Item -Path "HKCU:\Software\7-Zip" -Recurse -Force -ErrorAction SilentlyContinue
+      New-Item -Path "HKCU:\Software\7-Zip" -Force | Out-Null
+      & reg.exe restore "HKCU\Software\7-Zip" $state.hive | Out-Null
+      Write-Host "  settings restored from $($state.hive)"
+    }
+    if ($state.vaultBackup -and (Test-Path -LiteralPath $state.vaultBackup) -and $state.vaultExisted) {
+      $dir = Split-Path -Parent $state.vault
+      New-Item -ItemType Directory -Force -Path $dir | Out-Null
+      Copy-Item -LiteralPath $state.vaultBackup -Destination $state.vault -Force
+      Write-Host "  vault restored to $($state.vault)"
+    }
+  } catch { Write-Host "  restore failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+  Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue
+}
+Restore-PreviousRun
+
+$script:registryWasThere = Test-Path "HKCU:\Software\7-Zip"
+if ($script:registryWasThere) {
+  & reg.exe save "HKCU\Software\7-Zip" $hiveBackup /y | Out-Null
+}
+$script:realVaultExisted = Test-Path -LiteralPath $realVaultEarly
+if ($script:realVaultExisted) { Copy-Item -LiteralPath $realVaultEarly -Destination $realVaultBackup -Force }
+# the snapshot is written to disk so the next run can repair a killed run
+@{ hive = $hiveBackup; vault = $realVaultEarly; vaultBackup = $realVaultBackup; vaultExisted = $script:realVaultExisted; started = (Get-Date).ToString("s") } |
+  ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding UTF8
+
+function Restore-Isolation {
+  if ($script:registryWasThere -and (Test-Path -LiteralPath $hiveBackup)) {
+    Remove-Item -Path "HKCU:\Software\7-Zip" -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -Path "HKCU:\Software\7-Zip" -Force | Out-Null
+    & reg.exe restore "HKCU\Software\7-Zip" $hiveBackup | Out-Null
+  } elseif (-not $script:registryWasThere) {
+    Remove-Item -Path "HKCU:\Software\7-Zip" -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  if ($script:realVaultExisted -and (Test-Path -LiteralPath $realVaultBackup)) {
+    $dir = Split-Path -Parent $realVaultEarly
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    Copy-Item -LiteralPath $realVaultBackup -Destination $realVaultEarly -Force
+  }
+  Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue
+}
+# a run that is stopped with Ctrl+C or closed must also put things back
+Register-EngineEvent -SourceIdentifier PowerShell.Exiting -SupportEvent -Action { Restore-Isolation } | Out-Null
+trap { Restore-Isolation; break }
 try {
 
 Write-Host "== setup ==" -ForegroundColor Cyan
+
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 $plain = Join-Path $workDir "hello.txt"
 Set-Content -Path $plain -Value "secret content" -Encoding UTF8
@@ -1975,9 +2081,14 @@ Stop-Fm $p
 Set-ItemProperty -Path $regKey -Name "VaultPath" -Value $vault -Type String
 Remove-Item -Recurse -Force $vaultFolder -ErrorAction SilentlyContinue
 Remove-Item $elsewhere,"$elsewhere.tmp" -Force -ErrorAction SilentlyContinue
+  # the snapshot must be exactly what was there before
+  $beforeHash = if ($script:realVaultExisted) { (Get-FileHash -LiteralPath $realVaultBackup -Algorithm SHA256).Hash } else { "" }
+  $afterHash = if (Test-Path -LiteralPath $realVaultEarly) { (Get-FileHash -LiteralPath $realVaultEarly -Algorithm SHA256).Hash } else { "" }
+  Check "the real vault file was not modified" ($beforeHash -eq $afterHash)
 } finally {
   Stop-Fm $null
   Set-VaultSettings $savedSettings
+  Restore-Isolation
   if ($script:restoreLang) {
     if ($savedLang) { Set-ItemProperty -Path $langKey -Name "Lang" -Value $savedLang -Type String }
     else { Remove-ItemProperty -Path $langKey -Name "Lang" -ErrorAction SilentlyContinue }

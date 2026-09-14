@@ -35,13 +35,18 @@ class CPasswordVault
   /* The file exists but could not be read (locked, no permission, wrong account).
      Saving in that state would write the empty list in memory over the real file, so
      Save() refuses until a Load() succeeded. */
-  bool _readFailed;
+  bool _readFailed = false;
+  /* Size and write time of the file as it was read, to notice that another process
+     (7zFM and 7zG can both save) replaced it in the meantime. */
+  unsigned long long _loadedSize = 0;
+  unsigned long long _loadedWriteTime = 0;
 
   bool Load_DPAPI(NWindows::NFile::NIO::CInFile &f, Byte version, UString &errorMessage);
   bool Load_Master(HWND parent, NWindows::NFile::NIO::CInFile &f, UString &errorMessage);
   bool Save_DPAPI(NWindows::NFile::NIO::COutFile &f, UString &errorMessage);
   bool Save_Master(NWindows::NFile::NIO::COutFile &f, UString &errorMessage, HWND parent);
 
+  void RememberFileState();
   void SerializeEntries(CByteBuffer &out);
   bool ParseEntries(const Byte *data, size_t size, UString &errorMessage);
 

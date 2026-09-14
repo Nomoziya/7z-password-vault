@@ -97,3 +97,6 @@
 
 /* the vault exists but cannot be opened (locked, no permission, ...) - not "empty" */
 #define IDT_PASSWORD_ERR_OPEN           3862
+
+/* the file was replaced by another window after it had been read */
+#define IDT_PASSWORD_ERR_CHANGED        3863

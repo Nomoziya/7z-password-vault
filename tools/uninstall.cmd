@@ -13,6 +13,8 @@ if errorlevel 1 (
   echo.
   echo The uninstaller reported a problem. Read the messages above.
   rem An unattended run (-Yes) must not wait for a keypress: it has no console to press.
-  echo %* | findstr /i /c:"-Yes" >nul || pause
+  set "UNATTENDED="
+  for %%a in (%*) do if /i "%%~a"=="-Yes" set "UNATTENDED=1"
+  if not defined UNATTENDED pause
 )
 endlocal

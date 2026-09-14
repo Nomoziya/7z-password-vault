@@ -146,7 +146,31 @@ if ($VaultAction -eq "Ask" -and -not $WhatIf) {
   }
 }
 
-# ---------------------------------------------------------------- the vault, first
+# ---------------------------------------------------------------- confirm
+Say ""
+Say "Folder to remove : $installDirFull"
+Say "Registry (HKCU)  : $regRoot"
+Say "Vault file       : $vaultPath  ->  $VaultAction"
+if ($AllUsers) { Say "Machine-wide     : HKLM\SOFTWARE\7-Zip and matching classes (needs admin)" }
+Say ""
+if (-not $Yes -and -not $WhatIf) {
+  $answer = Read-Host "Remove everything listed above? [y/N]"
+  if ($answer -notmatch '^(y|Y)') { Say "nothing was done."; exit 1 }
+}
+
+# ---------------------------------------------------------------- backup
+if (-not $BackupPath) { $BackupPath = Join-Path $env:TEMP ("7zip-vault-settings-{0}.reg" -f (Get-Date -Format "yyyyMMdd-HHmmss")) }
+if (Test-Path -LiteralPath $regRoot) {
+  if ($WhatIf) { Say "  [would write] settings backup -> $BackupPath" }
+  elseif ($NoBackup) { Skip "settings backup switched off (-NoBackup)" }
+  else {
+    & reg.exe export "HKCU\Software\7-Zip" $BackupPath /y | Out-Null
+    if (Test-Path -LiteralPath $BackupPath) { Ok "settings backup -> $BackupPath" }
+    else { Say "  [failed]  the settings backup could not be written" -ForegroundColor Yellow }
+  }
+} else { Skip "no settings to back up" }
+
+# ---------------------------------------------------------------- the vault, before anything is deleted
 # Nothing may be deleted before the vault is safe: the default location is inside the
 # program folder, which the end of this script removes.
 if ($VaultAction -eq "Keep" -and (Test-InsideDir $vaultPath $installDirFull) -and
@@ -182,30 +206,6 @@ if ($VaultAction -eq "Keep" -and (Test-InsideDir $vaultPath $installDirFull) -an
     Say "   point Tools -> Options -> Password manager at this file to use it)"
   }
 }
-
-# ---------------------------------------------------------------- confirm
-Say ""
-Say "Folder to remove : $installDirFull"
-Say "Registry (HKCU)  : $regRoot"
-Say "Vault file       : $vaultPath  ->  $VaultAction"
-if ($AllUsers) { Say "Machine-wide     : HKLM\SOFTWARE\7-Zip and matching classes (needs admin)" }
-Say ""
-if (-not $Yes -and -not $WhatIf) {
-  $answer = Read-Host "Remove everything listed above? [y/N]"
-  if ($answer -notmatch '^(y|Y)') { Say "nothing was done."; exit 1 }
-}
-
-# ---------------------------------------------------------------- backup
-if (-not $BackupPath) { $BackupPath = Join-Path $env:TEMP ("7zip-vault-settings-{0}.reg" -f (Get-Date -Format "yyyyMMdd-HHmmss")) }
-if (Test-Path -LiteralPath $regRoot) {
-  if ($WhatIf) { Say "  [would write] settings backup -> $BackupPath" }
-  elseif ($NoBackup) { Skip "settings backup switched off (-NoBackup)" }
-  else {
-    & reg.exe export "HKCU\Software\7-Zip" $BackupPath /y | Out-Null
-    if (Test-Path -LiteralPath $BackupPath) { Ok "settings backup -> $BackupPath" }
-    else { Say "  [failed]  the settings backup could not be written" -ForegroundColor Yellow }
-  }
-} else { Skip "no settings to back up" }
 
 # ---------------------------------------------------------------- processes
 Say ""
@@ -337,11 +337,18 @@ Say ""
 Say "Vault file..."
 if ($VaultAction -eq "Keep") {
   Keep "your saved passwords: $vaultPath"
-  $tmp = "$vaultPath.tmp"
-  if (Test-Path -LiteralPath $tmp) { Remove-ItemSafe $tmp "leftover temporary vault" }
+  foreach ($tmp in @(Get-ChildItem -LiteralPath (Split-Path -Parent $vaultPath) -Filter ((Split-Path $vaultPath -Leaf) + ".tmp*") -Force -ErrorAction SilentlyContinue)) {
+    # a temporary file is a complete vault that was written but never renamed: tell the
+    # user instead of deleting it silently
+    Say ""
+    Say "  [note]    a temporary vault from an interrupted save is here:" -ForegroundColor Yellow
+    Say "            $($tmp.FullName)" -ForegroundColor Yellow
+    Say "            (it can be opened by renaming it to 7zPasswordVault.dat)" -ForegroundColor Yellow
+  }
 } else {
   Remove-ItemSafe $vaultPath "your saved passwords"
-  Remove-ItemSafe "$vaultPath.tmp" "leftover temporary vault"
+  Get-ChildItem -LiteralPath (Split-Path -Parent $vaultPath) -Filter ((Split-Path $vaultPath -Leaf) + ".tmp*") -Force -ErrorAction SilentlyContinue |
+    ForEach-Object { Remove-ItemSafe $_.FullName "leftover temporary vault" }
   $vaultFolder = Split-Path -Parent $vaultPath
   if ($vaultFolder -and (Test-Path -LiteralPath $vaultFolder)) {
     $left = @(Get-ChildItem -LiteralPath $vaultFolder -Force -ErrorAction SilentlyContinue)

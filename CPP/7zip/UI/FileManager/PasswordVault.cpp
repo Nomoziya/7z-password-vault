@@ -581,7 +581,12 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
 {
   _entries.Clear();
   _masterMode = false;
-  _readFailed = false;
+  /* Failed until a load really succeeded: every "return false" below - a bad version,
+     a bad header, a decryption or parse failure - then keeps saving disabled without
+     having to be listed here. */
+  _readFailed = true;
+  _loadedSize = 0;
+  _loadedWriteTime = 0;
 
   CInFile f;
   if (!f.Open(_path))
@@ -592,7 +597,10 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
        over the real file. */
     const DWORD sysError = ::GetLastError();
     if (::GetFileAttributesW(_path) == INVALID_FILE_ATTRIBUTES)
-      return true; // really does not exist yet
+    {
+      _readFailed = false; // really does not exist yet: an empty vault, not a failure
+      return true;
+    }
     SetPathError(errorMessage, IDT_PASSWORD_ERR_OPEN,
         L"无法打开密码库文件：\n{0}\n{1}", _path, sysError);
     _readFailed = true;
@@ -623,7 +631,25 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
   }
 
   _masterMode = ((flags & 1) != 0);
-  return _masterMode ? Load_Master(parent, f, errorMessage) : Load_DPAPI(f, version, errorMessage);
+  const bool ok = _masterMode ? Load_Master(parent, f, errorMessage) : Load_DPAPI(f, version, errorMessage);
+  if (ok)
+  {
+    _readFailed = false;
+    RememberFileState();
+  }
+  return ok;
+}
+
+void CPasswordVault::RememberFileState()
+{
+  _loadedSize = 0;
+  _loadedWriteTime = 0;
+  WIN32_FILE_ATTRIBUTE_DATA data;
+  if (!::GetFileAttributesExW(_path, GetFileExInfoStandard, &data))
+    return;
+  _loadedSize = ((unsigned long long)data.nFileSizeHigh << 32) | data.nFileSizeLow;
+  _loadedWriteTime = ((unsigned long long)data.ftLastWriteTime.dwHighDateTime << 32) |
+      data.ftLastWriteTime.dwLowDateTime;
 }
 
 bool CPasswordVault::Save(UString &errorMessage, HWND parent)
@@ -686,6 +712,25 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent)
     {
       ::DeleteFileW(tmpPath);
       return false;
+    }
+  }
+
+  /* Another process may have saved after this one read the file. Replacing it
+     now would silently drop the entries that were added there. */
+  {
+    WIN32_FILE_ATTRIBUTE_DATA now;
+    if (::GetFileAttributesExW(_path, GetFileExInfoStandard, &now))
+    {
+      const unsigned long long size = ((unsigned long long)now.nFileSizeHigh << 32) | now.nFileSizeLow;
+      const unsigned long long when = ((unsigned long long)now.ftLastWriteTime.dwHighDateTime << 32) |
+          now.ftLastWriteTime.dwLowDateTime;
+      if ((size != _loadedSize || when != _loadedWriteTime) && (_loadedSize != 0 || _loadedWriteTime != 0))
+      {
+        SetPathError(errorMessage, IDT_PASSWORD_ERR_CHANGED,
+            L"密码库已被另一个窗口修改，请重新打开：\n{0}", _path, 0);
+        ::DeleteFileW(tmpPath);
+        return false;
+      }
     }
   }
 
