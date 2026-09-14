@@ -264,13 +264,23 @@ binaries.
 
 ## 6. Current hashes / 当前哈希
 
-Built with MinGW-w64 GCC 16.2.0 as described above:
+The package carries its own list: `SHA256SUMS.txt` (written by `tests\deploy.ps1`) holds
+the SHA-256 of **every** file next to its name. Verify a download with that file instead
+of copying hashes from a document - a hard coded hash goes stale as soon as anything is
+rebuilt, and then a correct download looks tampered with (the last releases carried
+hashes that no longer matched).
 
-```
-7zG.exe   79763b2ca024b7f53ea820d588662a021f6680dcf18ed1a5a1dd67633a092bb1
-7zFM.exe  cc60c3193f5c9ebabb9eaf31359723abffd4bd13bb360eacb3a1b99171337f92
-```
+哈希清单随包发布：`SHA256SUMS.txt`（由 `tests\deploy.ps1` 生成）列出包内**每一个**文件的
+SHA-256 与名字。请用它校验下载，不要在文档里抄哈希 —— 文档里的哈希只要重新编译一次就会过期，
+那时正确的下载反而看起来像被人改过。
 
 ```powershell
-Get-FileHash .\7-Zip-密码管家版\7zG.exe -Algorithm SHA256
+Get-Content .\SHA256SUMS.txt | ForEach-Object {
+  if ($_ -match '^([0-9a-f]{64})\s+(.+)$') {
+    $want = $Matches[1]; $file = $Matches[2]
+    $got = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLower()
+    if ($got -ne $want) { Write-Host "MISMATCH $file" }
+  }
+}
+Write-Host "checked"
 ```

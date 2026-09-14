@@ -177,7 +177,9 @@ void CPasswordPage::OnSetMasterPassword()
 
   CPasswordVault::SetCachedMasterPassword(pw1);
 
-  if (!vault.Save(error, *this))
+  /* The user asked for master password mode: the mode is a decision, not something to
+     derive from the file that is being replaced. */
+  if (!vault.Save(error, *this, 1))
   {
     NPasswordVault::CInfo back;
     back.Load();
@@ -226,7 +228,7 @@ void CPasswordPage::OnClearMasterPassword()
   }
   CPasswordVault::ClearCachedMasterPassword();
 
-  if (!vault.Save(error, *this))
+  if (!vault.Save(error, *this, 0))
   {
     NPasswordVault::CInfo back;
     back.Load();
@@ -483,7 +485,7 @@ LONG CPasswordPage::OnApply()
   {
     UString error;
     vault.SetPath(newPath);
-    if (!vault.Save(error, *this))
+    if (!vault.Save(error, *this, newUseMaster ? 1 : 0))
     {
       /* Store the previous mode again: a stored mode that does not match the file
          would make the vault unreadable. */
