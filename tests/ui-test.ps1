@@ -2287,6 +2287,87 @@ if (-not (Test-Path -LiteralPath $realRoaming)) {
   Check "the portable test vault was removed again" (-not (Test-Path -LiteralPath $portableVault))
 }
 
+# ---------------------------------------------------------------- test 24b
+Write-Host "`n== 24b. the vault question: yes, cancel, and the untouched file ==" -ForegroundColor Cyan
+# The remaining branches of the same question (24a covers "no"), plus the rule that the file
+# that was not chosen is never touched, and the counterpart of test 7: a password that is
+# already stored must NOT be offered for saving again.
+Set-ItemProperty -Path $regKey -Name "VaultPath" -Value $vault -Type String
+Set-ItemProperty -Path $regKey -Name "UseMasterPassword" -Value 0 -Type DWord
+$portableVault = Join-Path $SevenZipDir "7zPasswordVault.dat"
+if ((-not (Test-Path -LiteralPath $realRoaming)) -or (Test-Path -LiteralPath $portableVault)) {
+  Check "the second question test has a free program folder and a vault in %APPDATA%" $false `
+    "(roaming=$(Test-Path -LiteralPath $realRoaming) portable=$(Test-Path -LiteralPath $portableVault))"
+} else {
+  Copy-Item -LiteralPath $vault -Destination $portableVault -Force
+  $roamingHashBefore = (Get-FileHash -LiteralPath $realRoaming -Algorithm SHA256).Hash
+  $portableHashBefore = (Get-FileHash -LiteralPath $portableVault -Algorithm SHA256).Hash
+  try {
+    # ---- "yes" = use the one next to the program, and nothing moves
+    Remove-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue
+    $p = Start-Fm $archive
+    $q = Wait-Dialog ([uint32]$p.Id) $T.Caption 15
+    Check "the question appears (yes branch)" ($q -ne [IntPtr]::Zero)
+    if ($q -ne [IntPtr]::Zero) {
+      [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($q, 6))   # IDYES = the program folder
+      $note = Wait-Dialog ([uint32]$p.Id) $T.Caption 8
+      Check "choosing the program folder is confirmed" ($note -ne [IntPtr]::Zero)
+      if ($note -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $note $T.Caption) }
+    }
+    $chosenYes = (Get-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue).VaultPath
+    Check "the program folder is recorded as the location" ($chosenYes -eq $portableVault) "(got [$chosenYes])"
+    Stop-Fm $p
+    Check "the vault in %APPDATA% was not touched (content)" `
+      ((Get-FileHash -LiteralPath $realRoaming -Algorithm SHA256).Hash -eq $roamingHashBefore)
+    Check "the vault in %APPDATA% is still there" (Test-Path -LiteralPath $realRoaming)
+
+    # ---- "cancel" = nothing is decided, and the question comes back
+    Remove-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue
+    $p = Start-Fm $archive
+    $q = Wait-Dialog ([uint32]$p.Id) $T.Caption 15
+    Check "the question appears (cancel branch)" ($q -ne [IntPtr]::Zero)
+    if ($q -ne [IntPtr]::Zero) {
+      [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($q, 2))   # IDCANCEL
+      Start-Sleep -Milliseconds 800
+    }
+    $chosenCancel = (Get-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue).VaultPath
+    Check "cancelling records no location" ([string]::IsNullOrEmpty($chosenCancel)) "(got [$chosenCancel])"
+    # the program stays usable: the password dialog of the running archive is still there
+    $dlg = Wait-Dialog ([uint32]$p.Id) $T.Password 8
+    Check "the program still works after cancelling" ($dlg -ne [IntPtr]::Zero)
+    Stop-Fm $p
+
+    $p = Start-Fm $archive
+    $again = Wait-Dialog ([uint32]$p.Id) $T.Caption 15
+    Check "the question comes back after cancelling" ($again -ne [IntPtr]::Zero)
+    if ($again -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $again $T.Caption) }
+    Stop-Fm $p
+    Check "both vault files are unchanged after everything (program folder)" `
+      ((Get-FileHash -LiteralPath $portableVault -Algorithm SHA256).Hash -eq $portableHashBefore)
+    Check "both vault files are unchanged after everything (%APPDATA%)" `
+      ((Get-FileHash -LiteralPath $realRoaming -Algorithm SHA256).Hash -eq $roamingHashBefore)
+  } finally {
+    Remove-Item -LiteralPath $portableVault -Force -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path $regKey -Name "VaultPath" -Value $vault -Type String
+  }
+
+  # ---- a password the vault already knows must not be offered for saving again
+  # (test 7 covers the opposite: an unknown password opens the prompt.)
+  Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
+  Set-ItemProperty -Path $regKey -Name "PromptToSaveNew" -Value 1 -Type DWord
+  $p = Start-Fm $archive
+  $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (known password)"
+  New-VaultEntry ([uint32]$p.Id) $dlg "already-there" "KnownPw-77" "the known entry is stored"
+  [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($dlg,120), "KnownPw-77")
+  Start-Sleep -Milliseconds 300
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 1))   # OK
+  $ask = Wait-Dialog ([uint32]$p.Id) $T.Caption 4
+  Check "a password that is already stored is not offered for saving" ($ask -eq [IntPtr]::Zero)
+  if ($ask -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $ask $T.Caption) }
+  Check "process alive after the known-password test" (-not $p.HasExited)
+  Stop-Fm $p
+}
+
 # ---------------------------------------------------------------- test 24
 Write-Host "`n== 24. what a fill really delivers ==" -ForegroundColor Cyan
 # A Windows password box cannot be read from another process, so the value is verified

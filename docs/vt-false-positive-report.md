@@ -149,3 +149,46 @@ Submission IDs of this round / 本轮提交编号: `7zFM.exe`
 `ZTNhZjQwZTE1MDZkMmFjZGJkOWQ0NDA4NzY4OTQ5NjU6MTc4OTM5MDQ1MA==`, `setup.exe`
 `NWFkYjIyNzA3ZGQ3N2ZmMzg4MjhiZmI4ZTAxNTg1OGY6MTc4OTM5MDA5Ng==`, `portable.zip`
 `OTA0MTAzNzliZTZjNDdmMjU5MTE3MmU1NmU5MjBiNTc6MTc4OTM5MDAxNA==`.
+
+---
+
+## Published set of v1.4.4 (2026-09-14) / v1.4.4 的发布集合
+
+The portable zip is the only published download (`installer\build.ps1` builds the SFX only with
+`-WithSetup`), so the wrapper's Elastic/CrowdStrike detections are no longer part of a release:
+
+| File | Result |
+|------|--------|
+| `7z-password-vault-26.03-win64-portable.zip` | **0/67** - nothing flagged |
+| `7zG.exe` | **0/65** - nothing flagged |
+| `7zFM.exe` | 1/69 - `Microsoft`: `Trojan:Win32/Wacatac.B!ml` |
+
+**One detection left in the whole release** (it was seven before the reduction work). It is a
+machine-learning verdict on an unsigned binary, so the durable fixes are a code-signing
+certificate and, until then, one false-positive submission per rebuild.
+
+### Ready to paste into the Microsoft submission form / 可直接粘贴的提交内容
+
+The form (<https://www.microsoft.com/en-us/wdsi/filesubmission>) asks for the file, the
+detection name and a description, and one file per submission:
+
+| Field | Value |
+|-------|-------|
+| Submission type | Software developer |
+| File | `7zFM.exe` from `7z-password-vault-26.03-win64-portable.zip` |
+| SHA-256 | `a24e93c6fe72ea95dbb3797a246d41733b285a64ce23a8a807a8dcd9ac867ccb` |
+| Detection name | `Trojan:Win32/Wacatac.B!ml` |
+| Product | `7-Zip Password Vault 26.03` (a modified build of 7-Zip 26.03) |
+| Verdict | Incorrectly detected / false positive |
+
+Description (English):
+
+> This is the file manager of an open-source fork of 7-Zip 26.03; the complete source, the
+> build description and the reproducible build instructions are at
+> https://github.com/Nomoziya/7z-password-vault. The build adds a local, AES-256-GCM
+> encrypted password vault (DPAPI or master password). The binary imports no networking
+> symbols at all (verified with objdump: no socket, no resolver, no wininet/winhttp) and
+> writes only under HKEY_CURRENT_USER and next to itself; the VirusTotal report of this file
+> shows a single machine-learning hit and no behaviour report. The verdict is a false
+> positive of the `!ml` model on an unsigned, low-prevalence binary.
+

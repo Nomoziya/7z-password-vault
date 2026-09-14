@@ -28,7 +28,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $package = Join-Path $root "7-Zip-密码管家版"
-$out = Join-Path $root $OutDir
+$out = if ([IO.Path]::IsPathRooted($OutDir)) { $OutDir } else { Join-Path $root $OutDir }
 $sevenZip = Join-Path $package "7z.exe"
 $sfx = Join-Path $package "7z.sfx"
 $config = Join-Path $PSScriptRoot "sfx-config.txt"

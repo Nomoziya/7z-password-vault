@@ -175,6 +175,11 @@ need a new submission for every repackaging.
 resource and the old manifest are linked again. (This is easy to miss: everything links fine
 and only the version info is stale.)
 
+The published artifact is reproducible as well: building the portable zip again - even into a
+different output folder - produced the same SHA-256 (`84e430be…`), because `Compress-Archive`
+does not store the current time for these entries. The hash inside `SHA256SUMS.txt` is over the
+files, so it stays valid either way.
+
 The version resource of the rebuilt binaries no longer claims to be Igor Pavlov's 7-Zip:
 `CPP/7zip/MyVersionInfo.rc` overrides `CompanyName` / `ProductName` / `LegalCopyright` for
 the components built here (`C/7zVersion.rc` keeps upstream defaults for everything else).
