@@ -26,10 +26,15 @@ if (-not $key) {
 }
 $headers = @{ "x-apikey" = $key; accept = "application/json" }
 
-$files = @(
+# The published artifacts first: they are what a user downloads, and a self-extracting
+# installer is a wrapped 7z archive that engines look at differently from a bare exe.
+# dist\ is a build output folder and is not always there, so the list is built defensively.
+$files = @()
+$files += @(Get-ChildItem -LiteralPath (Join-Path $root "dist") -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @(".zip", ".exe") } | Sort-Object Name | Select-Object -ExpandProperty FullName)
+$files += @(
   (Join-Path $root "7-Zip-密码管家版\7zFM.exe"),
-  (Join-Path $root "7-Zip-密码管家版\7zG.exe"),
-  (Join-Path $root "7z-password-vault-26.03-win64.zip")
+  (Join-Path $root "7-Zip-密码管家版\7zG.exe")
 ) | Where-Object { Test-Path $_ }
 
 function Show-Report([string]$hash) {

@@ -62,3 +62,46 @@ salted file signature — a rebuild produces different bytes and a new file hash
 **new build has to be submitted again**. That, and signing, is why `BUILD.md`
 section 5 recommends a code-signing certificate: a signed, reputable binary is not
 scored by the machine-learning model in the first place.
+
+---
+
+## v1.4.3 scan (2026-09-14) / v1.4.3 实测
+
+Scanned with `tests\vt-upload.ps1` (the two published artifacts first, then the two
+executables). The verdicts after a rebuild are **not** the same as the v1.4.0/v1.4.1
+numbers above: a new build has new hashes and is scored again from scratch.
+
+| File | SHA-256 (short) | Detections | Engines |
+|------|-----------------|-----------|---------|
+| `7z-password-vault-26.03-win64-portable.zip` | `3973c83f…` | 1/67 | Elastic (moderate) |
+| `7z-password-vault-26.03-win64-setup.exe` | `97d92a61…` | 3/70 | Microsoft `Trojan:Win32/Wacatac.C!ml`, Elastic (high), CrowdStrike `win/grayware_confidence_60%` |
+| `7zFM.exe` | `b0b7bc69…` | 2/70 | Microsoft `Trojan:Win32/Wacatac.B!ml`, Elastic (moderate) |
+| `7zG.exe` | `9b68b5ed…` | 1/70 | Microsoft `Trojan:Win32/Wacatac.C!ml` |
+
+Control / 对照实验: the **unmodified official `7z.sfx` stub** that the installer is built
+from (`9598f3bbca8e95391b8a356aee2e4cab93d9ac26eea47159ec725a55cf3bb32f`) is **0/71**.
+So the installer's extra detections do not come from the SFX stub - they come from the
+payload behind it: two executables that Microsoft already scores, plus `install.cmd` /
+`install.ps1` / `uninstall.ps1`, i.e. scripts that write registry keys and delete files.
+A self-extracting archive that unpacks and then runs a script is the shape of a dropper.
+
+对照实验：安装器所用的**官方原版 `7z.sfx` 存根**是 0/71。也就是说安装器多出来的检测
+不来自 SFX 存根，而来自它背后的载荷：两个已被微软打分的可执行文件，以及会改注册表、
+删除文件的 `install.cmd` / `install.ps1` / `uninstall.ps1`——「解包后立刻执行脚本」正是
+释放器的典型形态。
+
+Submission IDs for this round / 本轮提交编号:
+
+| File | Analysis ID |
+|------|-------------|
+| `7z-password-vault-26.03-win64-portable.zip` | `MmZmZWZjZTQzZjQyYmFmNmM5NTlkYTA4YjJlODkwYzk6MTc4OTM4NjIzMg==` |
+| `7z-password-vault-26.03-win64-setup.exe` | `ZDU3MWZjZjlhZTI4ZTMzOGE2N2ExNjFkMzVmZDQ3Mjk6MTc4OTM4NjMyOA==` |
+| `7zFM.exe` | `NTVjMDdkMWI2NWNiNDE0OTYxZWY1ZjIyMWYwMWE5MzU6MTc4OTM4NjQyMg==` |
+| `7zG.exe` | `M2ZhZWIxYzY1NWQ4OWM1ODQ3YmFlZjI4NTBiMmJlNDI6MTc4OTM4NjU3OQ==` |
+
+Recommended handling / 建议处置: offer the **portable zip** as the primary download
+(1/67, Elastic only) and keep the self-extracting installer as the convenient option;
+re-submit the two executables (and the installer) to Microsoft as false positives,
+because every rebuild needs its own submission; sign the binaries if a certificate is
+available. 建议以**便携版 zip** 为默认下载，安装器作为便捷选项保留，并把两个可执行文件
+与安装器重新提交微软误报，每次重新构建都要重新提交；有证书时给二进制签名。
