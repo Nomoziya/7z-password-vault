@@ -60,6 +60,39 @@ void CPasswordVaultUi::Load(HWND parent)
 {
   ReadSettings();
 
+  /* No location recorded and both default files exist (next to the program and in
+     %APPDATA%\7-Zip). The program cannot know which one is meant - guessing would show
+     an empty list while the real entries sit in the other file - so it asks once and
+     records the answer exactly like a location typed in the settings page. The file that
+     was not chosen is left untouched and a backup of it stays where it was. */
+  UString portable, roaming;
+  if (CPasswordVault::GetTwoDefaults(portable, roaming))
+  {
+    UString question = PasswordVault_GetText(IDT_PASSWORD_TWO_VAULTS_Q,
+        L"发现两个密码库文件：\n\n程序目录：{0}\n\n用户目录：{1}\n\n使用哪一个？\n\n"
+        L"「是」使用程序目录里的（不占用系统盘）\n"
+        L"「否」使用用户目录里的\n"
+        L"「取消」本次不决定，下次启动再问");
+    question.Replace(UString(L"{0}"), portable);
+    question.Replace(UString(L"{1}"), roaming);
+    const int answer = ::MessageBoxW(parent, question, PasswordVault_GetCaption(),
+        MB_ICONQUESTION | MB_YESNOCANCEL);
+
+    if (answer == IDYES || answer == IDNO)
+    {
+      const bool usePortable = (answer == IDYES);
+      const UString &chosen = usePortable ? portable : roaming;
+      const UString &leftover = usePortable ? roaming : portable;
+      CPasswordVault::SetConfiguredPath(chosen);
+      UString notice = PasswordVault_GetText(
+          usePortable ? IDT_PASSWORD_USING_PORTABLE : IDT_PASSWORD_USING_ROAMING,
+          L"以后使用这个密码库：\n\n{0}\n\n另一个库文件没有改动，仍在：\n\n{1}");
+      notice.Replace(UString(L"{0}"), chosen);
+      notice.Replace(UString(L"{1}"), leftover);
+      ::MessageBoxW(parent, notice, PasswordVault_GetCaption(), MB_ICONINFORMATION | MB_OK);
+    }
+  }
+
   /* First run after an update: an old vault in %APPDATA%\7-Zip moves next to the
      program, so the system drive is not used for it any more. */
   const UString moved = CPasswordVault::AdoptPortableDefault();

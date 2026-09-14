@@ -71,6 +71,15 @@ public:
      next to the program. Returns the message to show, or an empty string. */
   static UString AdoptPortableDefault();
 
+  /* No location was chosen yet and both default files exist. The program cannot
+     guess which one the user means, so the UI asks once and records the answer
+     with SetConfiguredPath. Returns false when there is nothing to ask. */
+  static bool GetTwoDefaults(UString &portable, UString &roaming);
+
+  /* Record a location as if the user had typed it in the settings page: the two
+     defaults are never asked about again and nothing is moved. */
+  static void SetConfiguredPath(const UString &path);
+
   // parent is used only to show the master-password prompt when needed.
   bool Load(HWND parent, UString &errorMessage);
   /* parent is used only when the master password has to be asked for again

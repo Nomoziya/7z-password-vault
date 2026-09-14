@@ -175,6 +175,15 @@ if (!(Test-Path $arch)) {
 $langKey = "HKCU:\Software\7-Zip"
 $savedLang = (Get-ItemProperty -Path $langKey -Name Lang -ErrorAction SilentlyContinue).Lang
 Set-ItemProperty -Path $langKey -Name "Lang" -Value $UiLang -Type String
+
+# A vault location has to be set as well: without one the program uses its default
+# location and - because a vault still sits in %APPDATA%\7-Zip - MOVES that file next to
+# the program. That is the program's documented behaviour, but a measuring tool must not
+# touch the user's vault. The path points into %TEMP% and is restored afterwards.
+$vaultKey = Join-Path $langKey "PasswordVault"
+$savedVaultPath = (Get-ItemProperty -Path $vaultKey -Name VaultPath -ErrorAction SilentlyContinue).VaultPath
+New-Item -Path $vaultKey -Force | Out-Null
+Set-ItemProperty -Path $vaultKey -Name VaultPath -Value (Join-Path $work "measure-vault.dat") -Type String
 try {
 
 $script:clipped = 0
@@ -261,6 +270,9 @@ Get-Process 7zFM -ErrorAction SilentlyContinue | Stop-Process -Force
   Get-Process 7zFM,7zG -ErrorAction SilentlyContinue | Stop-Process -Force
   if ($savedLang) { Set-ItemProperty -Path $langKey -Name "Lang" -Value $savedLang -Type String }
   else { Remove-ItemProperty -Path $langKey -Name "Lang" -ErrorAction SilentlyContinue }
+  if ($savedVaultPath) { Set-ItemProperty -Path $vaultKey -Name VaultPath -Value $savedVaultPath -Type String }
+  else { Remove-ItemProperty -Path $vaultKey -Name VaultPath -ErrorAction SilentlyContinue }
+  Remove-Item -Force (Join-Path $work "measure-vault.dat") -ErrorAction SilentlyContinue
 }
 
 Write-Host ""

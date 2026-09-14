@@ -103,3 +103,10 @@
 
 /* the location cannot be changed while the current vault is unreadable */
 #define IDT_PASSWORD_PATH_NEEDS_VAULT   3864
+
+/* asked once when both default vault files exist (program folder and %APPDATA%) */
+#define IDT_PASSWORD_TWO_VAULTS_Q       3865
+/* confirmed after the answer: which file is used from now on, and where the other
+   one stays */
+#define IDT_PASSWORD_USING_PORTABLE     3866
+#define IDT_PASSWORD_USING_ROAMING      3867

@@ -79,7 +79,7 @@ so you can compare several entries; the hint line shows which entry was filled.
 
 | Option | Meaning |
 |--------|---------|
-| Vault path (empty = default) | Custom vault file location. The default is **next to the program** (`<program folder>\7zPasswordVault.dat`), so the vault does not use space on the system drive; if the program folder cannot be written (an installation under `Program Files`), `%APPDATA%\7-Zip\7zPasswordVault.dat` is used instead, and a vault that is still there is moved next to the program on the first run. **A folder works too** — the Browse button picks one — and the vault file inside it is then used (`<folder>\7zPasswordVault.dat`); a quoted path (as Explorer copies it) is accepted as well. |
+| Vault path (empty = default) | Custom vault file location. The default is **next to the program** (`<program folder>\7zPasswordVault.dat`), so the vault does not use space on the system drive; if the program folder cannot be written (an installation under `Program Files`), `%APPDATA%\7-Zip\7zPasswordVault.dat` is used instead, and a vault that is still there is moved next to the program on the first run. **When both files exist** the program asks once which one to use — *Yes* takes the one next to the program, *No* the one in the user folder, *Cancel* decides nothing and asks again on the next start — and remembers the answer, so the question never comes back; the file that was not chosen is left untouched. **A folder works too** — the Browse button picks one — and the vault file inside it is then used (`<folder>\7zPasswordVault.dat`); a quoted path (as Explorer copies it) is accepted as well. |
 | Browse... | Pick the vault file location |
 | Use master password (portable) | Encrypt the vault with AES-256-GCM + master password |
 | Set master password... | Set / change the master password (entered twice) |
@@ -265,7 +265,7 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 
 | 选项 | 说明 |
 |------|------|
-| 密码库位置（留空使用默认） | 自定义密码库文件存放路径。默认放在**程序所在文件夹**（`<程序目录>\7zPasswordVault.dat`），不占用系统盘；若程序目录不可写（例如装在 `Program Files`），则退回 `%APPDATA%\7-Zip\7zPasswordVault.dat`，并且仍在旧位置的密码库会在首次运行时移动到程序目录。**也可以直接填文件夹**（「浏览...」选的就是文件夹），此时使用该文件夹里的 `7zPasswordVault.dat`；带引号的路径（从资源管理器复制来的）同样可用。 |
+| 密码库位置（留空使用默认） | 自定义密码库文件存放路径。默认放在**程序所在文件夹**（`<程序目录>\7zPasswordVault.dat`），不占用系统盘；若程序目录不可写（例如装在 `Program Files`），则退回 `%APPDATA%\7-Zip\7zPasswordVault.dat`，并且仍在旧位置的密码库会在首次运行时移动到程序目录。**两个位置都有密码库时**，程序只问一次用哪一个 —— 「是」用程序目录里的，「否」用用户目录里的，「取消」本次不决定、下次启动再问 —— 并记住你的选择，以后不再询问；没被选中的那个文件保持原样。**也可以直接填文件夹**（「浏览...」选的就是文件夹），此时使用该文件夹里的 `7zPasswordVault.dat`；带引号的路径（从资源管理器复制来的）同样可用。 |
 | 浏览... | 选择密码库文件位置 |
 | 使用主密码加密（可移植） | 开启后用 AES-256-GCM + 主密码加密，可迁移到其它电脑 |
 | 设置主密码... | 设置 / 修改主密码（输入两次） |

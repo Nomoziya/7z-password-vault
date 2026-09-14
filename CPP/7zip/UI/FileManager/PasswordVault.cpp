@@ -501,6 +501,46 @@ UString CPasswordVault::GetDefaultPath()
   return roaming;
 }
 
+/* The two default locations, filled in when the program folder is usable. */
+static bool GetDefaultPair(UString &portable, UString &roaming)
+{
+  const UString programFolder = GetProgramFolderPath();
+  if (programFolder.IsEmpty())
+    return false;
+
+  portable = programFolder;
+  portable.Add_PathSepar();
+  portable += kDefaultFileName;
+
+  roaming = GetVaultFolderPath();
+  roaming.Add_PathSepar();
+  roaming += kDefaultFileName;
+  return true;
+}
+
+bool CPasswordVault::GetTwoDefaults(UString &portable, UString &roaming)
+{
+  NPasswordVault::CInfo settings;
+  settings.Load();
+  if (!settings.VaultPath.IsEmpty())
+    return false;   /* the user already decided */
+
+  if (!GetDefaultPair(portable, roaming))
+    return false;
+  if (::GetFileAttributesW(portable) == INVALID_FILE_ATTRIBUTES)
+    return false;
+  if (::GetFileAttributesW(roaming) == INVALID_FILE_ATTRIBUTES)
+    return false;
+  return true;
+}
+
+void CPasswordVault::SetConfiguredPath(const UString &path)
+{
+  NPasswordVault::CInfo settings;
+  settings.VaultPath = us2fs(path);
+  settings.Save();
+}
+
 UString CPasswordVault::AdoptPortableDefault()
 {
   /* Nothing configured and the vault still sits in %APPDATA%\7-Zip: move it next to

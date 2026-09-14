@@ -2228,6 +2228,54 @@ if ((Test-Path $vault) -and (Get-Item $vault).Length -gt 16) {
   Check "process alive after the damaged vault test" (-not $p.HasExited)
   Stop-Fm $p
 }
+# ---------------------------------------------------------------- test 24a
+Write-Host "`n== 24a. two default vaults: ask once, then remember ==" -ForegroundColor Cyan
+# Both default locations hold a vault next to the program and in %APPDATA%\7-Zip and no
+# location is recorded: the program has to ask, because guessing would show an empty list
+# while the real entries sit in the other file. The real vault is never written - only its
+# existence matters - and the recorded choice is undone by the isolation restore.
+$realRoaming = Join-Path (Join-Path $env:APPDATA "7-Zip") "7zPasswordVault.dat"
+$portableVault = Join-Path $SevenZipDir "7zPasswordVault.dat"
+$portableBefore = Test-Path -LiteralPath $portableVault
+if (-not (Test-Path -LiteralPath $realRoaming)) {
+  Check "a vault in %APPDATA% is needed for this test" $false "(no $realRoaming)"
+} elseif ($portableBefore) {
+  Check "the program folder is free for the portable test vault" $false "(already there: $portableVault)"
+} else {
+  Remove-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue
+  # a valid vault of this run (readable through DPAPI), not the user's file
+  Copy-Item -LiteralPath $vault -Destination $portableVault -Force
+  Check "both default vault files exist now" ((Test-Path -LiteralPath $portableVault) -and (Test-Path -LiteralPath $realRoaming))
+
+  $p = Start-Fm $archive
+  $q = Wait-Dialog ([uint32]$p.Id) $T.Caption 15
+  Check "the program asks which vault to use" ($q -ne [IntPtr]::Zero)
+  if ($q -ne [IntPtr]::Zero) {
+    [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($q, 7))   # IDNO = the one in %APPDATA%
+    $note = Wait-Dialog ([uint32]$p.Id) $T.Caption 8
+    Check "the answer is confirmed with the chosen location" ($note -ne [IntPtr]::Zero)
+    if ($note -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $note $T.Caption) }
+  }
+  $chosen = (Get-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue).VaultPath
+  Check "the choice is recorded, so the question is not repeated" ($chosen -eq $realRoaming) "(got [$chosen])"
+  Stop-Fm $p
+
+  # the second start must not ask again (an unrelated message box would say something else)
+  $p = Start-Fm $archive
+  $again = Wait-Dialog ([uint32]$p.Id) $T.Caption 8
+  if ($again -eq [IntPtr]::Zero) {
+    Check "the question does not come back" $true
+  } else {
+    $said = [VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($again, 65535))
+    Check "the question does not come back" ($said -notmatch "密码库|vault") "(box said [$said])"
+    [void](Close-Box ([uint32]$p.Id) $again $T.Caption)
+  }
+  Stop-Fm $p
+
+  Remove-Item -LiteralPath $portableVault -Force -ErrorAction SilentlyContinue
+  Check "the portable test vault was removed again" (-not (Test-Path -LiteralPath $portableVault))
+}
+
 # ---------------------------------------------------------------- test 24
 Write-Host "`n== 24. what a fill really delivers ==" -ForegroundColor Cyan
 # A Windows password box cannot be read from another process, so the value is verified
