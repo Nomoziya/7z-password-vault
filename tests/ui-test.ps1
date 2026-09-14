@@ -828,11 +828,14 @@ function Restore-PreviousRun {
   Write-Host "A previous run did not finish: restoring its snapshot first." -ForegroundColor Yellow
   try {
     $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
-    if ($state.hive -and (Test-Path -LiteralPath $state.hive)) {
+    if ($state.settings) {
       Remove-Item -Path "HKCU:\Software\7-Zip" -Recurse -Force -ErrorAction SilentlyContinue
       New-Item -Path "HKCU:\Software\7-Zip" -Force | Out-Null
-      & reg.exe restore "HKCU\Software\7-Zip" $state.hive | Out-Null
-      Write-Host "  settings restored from $($state.hive)"
+      foreach ($name in $state.settings.PSObject.Properties.Name) {
+        $entry = $state.settings.$name
+        Set-ItemProperty -Path "HKCU:\Software\7-Zip" -Name $name -Value $entry.value -Type $entry.type
+      }
+      Write-Host "  settings restored ($($state.settings.PSObject.Properties.Name.Count) values)"
     }
     if ($state.vaultBackup -and (Test-Path -LiteralPath $state.vaultBackup) -and $state.vaultExisted) {
       $dir = Split-Path -Parent $state.vault
@@ -845,24 +848,39 @@ function Restore-PreviousRun {
 }
 Restore-PreviousRun
 
+# reg save/restore needs SeBackupPrivilege, which a normal user does not hold (measured:
+# "A required privilege is not held by the client"), so the values are snapshotted with
+# PowerShell instead - value names, data and types included.
 $script:registryWasThere = Test-Path "HKCU:\Software\7-Zip"
+$script:settingsSnapshot = $null
 if ($script:registryWasThere) {
-  & reg.exe save "HKCU\Software\7-Zip" $hiveBackup /y | Out-Null
+  $bag = @{}
+  foreach ($prop in (Get-ItemProperty -Path "HKCU:\Software\7-Zip")) {
+    if ($prop.Name -like "PS*") { continue }
+    $type = "String"
+    if ($prop.Value -is [int]) { $type = "DWord" }
+    elseif ($prop.Value -is [long]) { $type = "QWord" }
+    elseif ($prop.Value -is [array]) { $type = "MultiString" }
+    $bag[$prop.Name] = @{ value = $prop.Value; type = $type }
+  }
+  $script:settingsSnapshot = $bag
 }
 $script:realVaultExisted = Test-Path -LiteralPath $realVaultEarly
 if ($script:realVaultExisted) { Copy-Item -LiteralPath $realVaultEarly -Destination $realVaultBackup -Force }
 # the snapshot is written to disk so the next run can repair a killed run
-@{ hive = $hiveBackup; vault = $realVaultEarly; vaultBackup = $realVaultBackup; vaultExisted = $script:realVaultExisted; started = (Get-Date).ToString("s") } |
-  ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding UTF8
+@{ settings = $script:settingsSnapshot; vault = $realVaultEarly; vaultBackup = $realVaultBackup; vaultExisted = $script:realVaultExisted; started = (Get-Date).ToString("s") } |
+  ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $stateFile -Encoding UTF8
+function Fill-Registry([hashtable]$bag) {
+  Remove-Item -Path "HKCU:\Software\7-Zip" -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -Path "HKCU:\Software\7-Zip" -Force | Out-Null
+  if ($null -eq $bag) { return }
+  foreach ($name in $bag.Keys) {
+    Set-ItemProperty -Path "HKCU:\Software\7-Zip" -Name $name -Value $bag[$name].value -Type $bag[$name].type
+  }
+}
 
 function Restore-Isolation {
-  if ($script:registryWasThere -and (Test-Path -LiteralPath $hiveBackup)) {
-    Remove-Item -Path "HKCU:\Software\7-Zip" -Recurse -Force -ErrorAction SilentlyContinue
-    New-Item -Path "HKCU:\Software\7-Zip" -Force | Out-Null
-    & reg.exe restore "HKCU\Software\7-Zip" $hiveBackup | Out-Null
-  } elseif (-not $script:registryWasThere) {
-    Remove-Item -Path "HKCU:\Software\7-Zip" -Recurse -Force -ErrorAction SilentlyContinue
-  }
+  Fill-Registry $script:settingsSnapshot
   if ($script:realVaultExisted -and (Test-Path -LiteralPath $realVaultBackup)) {
     $dir = Split-Path -Parent $realVaultEarly
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -941,10 +959,21 @@ function Apply-PasswordPage([uint32]$procId, [hashtable]$page) {
   [void](Wait-NoDialog $procId $T.Caption 6)
   return "asked"
 }
-# Reads the password box of a dialog, waiting for the text: the vault writes it just
-# after the window that stored it has closed.
-function Wait-PasswordText([IntPtr]$dlg, [string]$expected, [int]$seconds = 5) {
-  return (Wait-EditText ([VaultUiTest]::FindDescendant($dlg, 120)) $expected $seconds)
+# A Windows password box (ES_PASSWORD) cannot be read from another process: the system
+# returns an empty string on purpose, which is why "the box contains X" checks read
+# empty while every check that looks at the *result* (the archive opens, the list shows
+# the password) passes. So the password box is only checked for being there, and what
+# was filled in is verified through the outcome.
+function Test-PasswordBox([IntPtr]$dlg) {
+  $edit = [VaultUiTest]::FindDescendant($dlg, 120)
+  if ($edit -eq [IntPtr]::Zero) { return $false }
+  $style = [VaultUiTest]::GetWindowLongW($edit, -16)
+  return (($style -band 0x20) -ne 0)   # ES_PASSWORD
+}
+# The saved-passwords window is the only place where a password can be read back (its
+# list is not a password control), so the tests read it there.
+function Get-ListPassword([IntPtr]$lst, [int]$row) {
+  return [VaultUiTest]::GetListText($lst, $row, 1)
 }
 # ---------------------------------------------------------------- test 1
 Write-Host "`n== 1. save a named password ==" -ForegroundColor Cyan

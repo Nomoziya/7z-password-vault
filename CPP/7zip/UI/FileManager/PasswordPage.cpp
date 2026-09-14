@@ -163,8 +163,10 @@ void CPasswordPage::OnSetMasterPassword()
   }
 
   /* The mode has to be stored BEFORE the file is written, because Save() takes it
-     from the settings. A failed write therefore stores the previous mode again,
-     so the setting and the file can never end up disagreeing. */
+     from the settings - but only now that both prompts were answered and the passwords
+     were checked: storing it earlier meant that cancelling the prompt left the registry
+     saying "master password mode" while the file was still DPAPI, and every later start
+     could not read it. */
   {
     NPasswordVault::CInfo settings;
     settings.Load();
@@ -429,14 +431,19 @@ LONG CPasswordPage::OnApply()
      stored would fail. It is rewritten below, and only a successful rewrite
      leaves the new mode stored. */
   CPasswordVault vault;
+  bool oldVaultReadable = true;
   if (reEncrypt)
   {
     UString error;
     vault.SetPath(oldPath);
     if (!vault.Load(*this, error))
     {
-      ErrorBox(*this, error);
-      return PSNRET_INVALID_NOCHANGEPAGE;
+      /* The old vault cannot be read (damaged, another account, locked). The settings -
+         including a new location - are still stored, so the user has a way out; only the
+         rewrite of the file is skipped, because that would need the old contents. */
+      oldVaultReadable = false;
+      if (!error.IsEmpty())
+        ErrorBox(*this, error);
     }
   }
 
@@ -460,7 +467,7 @@ LONG CPasswordPage::OnApply()
   if (!remember)
     CPasswordVault::ClearCachedMasterPassword();
 
-  if (reEncrypt)
+  if (reEncrypt && oldVaultReadable)
   {
     UString error;
     vault.SetPath(newPath);
@@ -479,7 +486,7 @@ LONG CPasswordPage::OnApply()
       return PSNRET_INVALID_NOCHANGEPAGE;
     }
 
-    if (pathChanged && FileExists(oldPath))
+    if (pathChanged && oldVaultReadable && FileExists(oldPath))
     {
       UString msg = PasswordVault_GetText(IDT_PASSWORD_MOVED_Q,
           L"密码库已写入新位置：\n\n{0}\n\n是否删除旧位置的密码库文件？\n\n{1}");

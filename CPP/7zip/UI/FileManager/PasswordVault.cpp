@@ -703,8 +703,13 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent)
     }
 
     if (!ok && errorMessage.IsEmpty())
-      SetPathError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件：\n{0}",
-          _path, 0);
+    {
+      /* An empty message means the user cancelled the master password prompt: that is
+         not a write error and must not be reported as one. */
+      f.Close();
+      ::DeleteFileW(tmpPath);
+      return false;
+    }
 
     f.Close();
 
@@ -745,6 +750,9 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent)
     return false;
   }
 
+  /* What was just written is the state we read now: without this the next save of the
+     same instance would compare against the old file and report a conflict. */
+  RememberFileState();
   return true;
 }
 

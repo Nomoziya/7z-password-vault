@@ -170,6 +170,24 @@ if (Test-Path -LiteralPath $regRoot) {
   }
 } else { Skip "no settings to back up" }
 
+# ---------------------------------------------------------------- processes
+Say ""
+Say "Stopping running 7-Zip processes from this folder..."
+$stopped = 0
+foreach ($name in "7zFM", "7zG", "7z", "7zCon") {
+  foreach ($proc in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
+    $path = ""
+    try { $path = $proc.Path } catch { }
+    if (Test-InsideDir $path $installDirFull) {
+      if (-not $WhatIf) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+      Say ("  [stopped] {0} (pid {1})" -f $path, $proc.Id)
+      $stopped++
+    } elseif ($path) { Skip "$name from another folder: $path" }
+  }
+}
+if ($stopped -eq 0) { Skip "no process from this folder was running" }
+if (-not $WhatIf) { Start-Sleep -Milliseconds 500 }
+
 # ---------------------------------------------------------------- the vault, before anything is deleted
 # Nothing may be deleted before the vault is safe: the default location is inside the
 # program folder, which the end of this script removes.
@@ -206,24 +224,6 @@ if ($VaultAction -eq "Keep" -and (Test-InsideDir $vaultPath $installDirFull) -an
     Say "   point Tools -> Options -> Password manager at this file to use it)"
   }
 }
-
-# ---------------------------------------------------------------- processes
-Say ""
-Say "Stopping running 7-Zip processes from this folder..."
-$stopped = 0
-foreach ($name in "7zFM", "7zG", "7z", "7zCon") {
-  foreach ($proc in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
-    $path = ""
-    try { $path = $proc.Path } catch { }
-    if (Test-InsideDir $path $installDirFull) {
-      if (-not $WhatIf) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-      Say ("  [stopped] {0} (pid {1})" -f $path, $proc.Id)
-      $stopped++
-    } elseif ($path) { Skip "$name from another folder: $path" }
-  }
-}
-if ($stopped -eq 0) { Skip "no process from this folder was running" }
-if (-not $WhatIf) { Start-Sleep -Milliseconds 500 }
 
 # ---------------------------------------------------------------- registry (per user)
 Say ""
@@ -319,7 +319,10 @@ if ($AllUsers) {
     $hklmClasses = "HKLM:\SOFTWARE\Classes"
     if (Test-Path -LiteralPath $hklmClasses) {
       foreach ($key in @(Get-ChildItem -LiteralPath $hklmClasses -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like "7-Zip.*" })) {
-        Remove-RegKeySafe $key.PSPath "machine file type $($key.PSChildName)"
+        $cmd = (Get-ItemProperty -LiteralPath (Join-Path $key.PSPath "shell\open\command") -Name "(default)" -ErrorAction SilentlyContinue)."(default)"
+        if ($cmd -and (Test-InsideDir (($cmd -split [char]44)[0].Trim().Trim([char]34)) $installDirFull)) {
+          Remove-RegKeySafe $key.PSPath "machine file type $($key.PSChildName)"
+        } else { Skip "machine file type $($key.PSChildName) belongs to another 7-Zip" }
       }
       # entries of a previously installed official 7-Zip whose files are gone
       foreach ($key in @(Get-ChildItem -LiteralPath $hklmClasses -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like ".*" })) {
@@ -337,7 +340,8 @@ Say ""
 Say "Vault file..."
 if ($VaultAction -eq "Keep") {
   Keep "your saved passwords: $vaultPath"
-  foreach ($tmp in @(Get-ChildItem -LiteralPath (Split-Path -Parent $vaultPath) -Filter ((Split-Path $vaultPath -Leaf) + ".tmp*") -Force -ErrorAction SilentlyContinue)) {
+  $vaultDir = if ($vaultPath) { Split-Path -Parent $vaultPath } else { "" }
+  foreach ($tmp in @(if ($vaultDir) { Get-ChildItem -LiteralPath $vaultDir -Filter ((Split-Path $vaultPath -Leaf) + ".tmp*") -Force -ErrorAction SilentlyContinue })) {
     # a temporary file is a complete vault that was written but never renamed: tell the
     # user instead of deleting it silently
     Say ""
@@ -347,8 +351,10 @@ if ($VaultAction -eq "Keep") {
   }
 } else {
   Remove-ItemSafe $vaultPath "your saved passwords"
-  Get-ChildItem -LiteralPath (Split-Path -Parent $vaultPath) -Filter ((Split-Path $vaultPath -Leaf) + ".tmp*") -Force -ErrorAction SilentlyContinue |
-    ForEach-Object { Remove-ItemSafe $_.FullName "leftover temporary vault" }
+  if ($vaultPath) {
+    Get-ChildItem -LiteralPath (Split-Path -Parent $vaultPath) -Filter ((Split-Path $vaultPath -Leaf) + ".tmp*") -Force -ErrorAction SilentlyContinue |
+      ForEach-Object { Remove-ItemSafe $_.FullName "leftover temporary vault" }
+  }
   $vaultFolder = Split-Path -Parent $vaultPath
   if ($vaultFolder -and (Test-Path -LiteralPath $vaultFolder)) {
     $left = @(Get-ChildItem -LiteralPath $vaultFolder -Force -ErrorAction SilentlyContinue)
@@ -361,7 +367,13 @@ if ($VaultAction -eq "Keep") {
 Say ""
 Say "Program folder..."
 if ($WhatIf) {
-  Say "  [would remove] the files of this package in $installDirFull (anything else stays)"
+  Say "  [would remove] these files in $installDirFull (everything else stays):"
+  foreach ($name in $ours) {
+    if (Test-Path -LiteralPath (Join-Path $installDirFull $name)) { Say "      $name" }
+  }
+  foreach ($d in @("Lang", "Codecs", "Formats")) {
+    if (Test-Path -LiteralPath (Join-Path $installDirFull $d)) { Say "      $d\" }
+  }
 } else {
   $self = $MyInvocation.MyCommand.Path
   # Only the files that ship with this package are removed by name. The folder may be a
@@ -369,7 +381,8 @@ if ($WhatIf) {
   # delete what it does not own.
   $ours = @("7zFM.exe", "7zG.exe", "7z.exe", "7z.dll", "7-zip.dll", "7-zip32.dll",
             "7z.sfx", "7zCon.sfx", "7-zip.chm", "History.txt", "License.txt", "readme.txt",
-            "descript.ion", "README.md", "BUILD.md", "uninstall.cmd", "uninstall.ps1")
+            "descript.ion", "README.md", "BUILD.md", "uninstall.cmd", "uninstall.ps1",
+            "install.cmd", "install.ps1", "SHA256SUMS.txt")
   $removedFiles = 0
   foreach ($name in $ours) {
     $f = Join-Path $installDirFull $name
