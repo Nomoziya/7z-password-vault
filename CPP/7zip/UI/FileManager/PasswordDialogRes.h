@@ -120,3 +120,7 @@
 /* the program folder changed since the shortcuts / uninstall entry were registered (the
    portable package was moved or copied): offer to update them, once per folder */
 #define IDT_PASSWORD_MOVED_ASK          3871
+
+/* a shortcut with our name belongs to another copy of the program that still exists: it is
+   left alone instead of being taken over silently */
+#define IDT_PASSWORD_SHORTCUT_OTHER_COPY 3872

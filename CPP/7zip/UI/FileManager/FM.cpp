@@ -430,7 +430,9 @@ static BOOL InitInstance(int nCmdShow)
   SetupShortcuts_AskIfNeeded((HWND)wnd);
 
   /* A portable copy that was moved keeps its shortcuts and its uninstall entry pointing at
-     the old folder; the copy asks once per folder whether they should be updated. */
+     the old folder. CheckLocation removes a registration whose folder is gone (quietly, and
+     only after checking that the entry really points there), ignores a folder that still
+     holds another copy, and otherwise offers to update the entries once per move. */
   SetupShortcuts_CheckLocation((HWND)wnd);
 
   return TRUE;

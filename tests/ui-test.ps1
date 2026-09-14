@@ -2482,6 +2482,13 @@ if ((Test-Path -LiteralPath $deskShortcut) -or (Test-Path -LiteralPath $startSho
 } else {
   # ---- A: the settings page button does the registration
   $p = Start-Fm ""
+  $fmWnd = [IntPtr]::Zero
+  $deadline = (Get-Date).AddSeconds(10)
+  while ((Get-Date) -lt $deadline -and $fmWnd -eq [IntPtr]::Zero) {
+    $fmWnd = [VaultUiTest]::FindDialogClass([uint32]$p.Id, "7-Zip::FM")
+    if ($fmWnd -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 200 }
+  }
+  Check "the file manager window is up (for the page button)" ($fmWnd -ne [IntPtr]::Zero)
   $page = Open-PasswordPage ([uint32]$p.Id) "the page opens for the setup button"
   $btn = [VaultUiTest]::FindDescendant($page.Opt, 2616)
   Check "the settings page has a 'create shortcuts / register' button" ($btn -ne [IntPtr]::Zero)
@@ -2501,38 +2508,75 @@ if ((Test-Path -LiteralPath $deskShortcut) -or (Test-Path -LiteralPath $startSho
   Start-Sleep -Milliseconds 600
   Stop-Fm $p
 
-  # ---- B: the folder moved -> asked once, and "no" is remembered for that folder
+  # ---- B: the registration belongs to a folder that is gone -> asked once per move
+  New-Item -Path $uninstallKey -Force | Out-Null
+  Set-ItemProperty -Path $uninstallKey -Name "InstallLocation" -Value $fakeOldFolder -Type String
   Set-ItemProperty -Path $regKey -Name "LastRegistered" -Value $fakeOldFolder -Type String
-  Remove-ItemProperty -Path $regKey -Name "MoveAsked" -ErrorAction SilentlyContinue
+  Remove-ItemProperty -Path $regKey -Name "MoveAskedFrom" -ErrorAction SilentlyContinue
+  Remove-ItemProperty -Path $regKey -Name "MoveAskedTo" -ErrorAction SilentlyContinue
   $p = Start-Fm ""
   $moved = Wait-Dialog ([uint32]$p.Id) $T.Caption 12
-  Check "a changed folder is reported" ($moved -ne [IntPtr]::Zero)
+  Check "a registration for a missing folder is reported" ($moved -ne [IntPtr]::Zero)
+  Check "the program is still running while the question is up" (-not $p.HasExited)
   if ($moved -ne [IntPtr]::Zero) {
     $said = [VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($moved, 65535))
     Check "the question names the old folder" ($said -match [regex]::Escape($fakeOldFolder)) "(box said [$said])"
     [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($moved, 7))   # IDNO = leave it alone
     Start-Sleep -Milliseconds 900
   }
-  $askedFor = (Get-ItemProperty -Path $regKey -Name "MoveAsked" -ErrorAction SilentlyContinue).MoveAsked
-  Check "the folder that was asked about is remembered" ($askedFor -eq $SevenZipDir) "(got [$askedFor])"
+  Check "the dead uninstall entry was removed" (-not (Test-Path -LiteralPath $uninstallKey))
+  $from = (Get-ItemProperty -Path $regKey -Name "MoveAskedFrom" -ErrorAction SilentlyContinue).MoveAskedFrom
+  $to = (Get-ItemProperty -Path $regKey -Name "MoveAskedTo" -ErrorAction SilentlyContinue).MoveAskedTo
+  Check "the move that was declined is remembered (from)" ($from -eq $fakeOldFolder) "(got [$from])"
+  Check "the move that was declined is remembered (to)" ($to -eq $SevenZipDir) "(got [$to])"
+  $regGone = (Get-ItemProperty -Path $regKey -Name "LastRegistered" -ErrorAction SilentlyContinue).LastRegistered
+  Check "the stale registration was dropped" ([string]::IsNullOrEmpty($regGone)) "(got [$regGone])"
   Stop-Fm $p
 
   $p = Start-Fm ""
   $again = Wait-Dialog ([uint32]$p.Id) $T.Caption 8
   Check "the moved-folder question does not come back" ($again -eq [IntPtr]::Zero)
+  Check "the program is alive after the quiet start" (-not $p.HasExited)
   Stop-Fm $p
 
-  # ---- C: a registration whose folder is gone is a broken entry, not a question
-  $gone = Join-Path $workDir "folder-that-is-not-there"
-  Set-ItemProperty -Path $regKey -Name "LastRegistered" -Value $gone -Type String
-  Remove-ItemProperty -Path $regKey -Name "MoveAsked" -ErrorAction SilentlyContinue
+  # ---- B2: the same situation, answered with "yes": the entries move to this folder
+  New-Item -Path $uninstallKey -Force | Out-Null
+  Set-ItemProperty -Path $uninstallKey -Name "InstallLocation" -Value $fakeOldFolder -Type String
+  Set-ItemProperty -Path $regKey -Name "LastRegistered" -Value $fakeOldFolder -Type String
+  Remove-ItemProperty -Path $regKey -Name "MoveAskedFrom" -ErrorAction SilentlyContinue
+  Remove-ItemProperty -Path $regKey -Name "MoveAskedTo" -ErrorAction SilentlyContinue
+  Remove-ItemProperty -Path $regKey -Name "SetupAsked" -ErrorAction SilentlyContinue
+  $p = Start-Fm ""
+  $ask2 = Wait-Dialog ([uint32]$p.Id) $T.Caption 12
+  Check "the question appears again for a new move" ($ask2 -ne [IntPtr]::Zero)
+  if ($ask2 -ne [IntPtr]::Zero) {
+    [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($ask2, 6))   # IDYES = update it
+    $done = Wait-Dialog ([uint32]$p.Id) $T.Caption 12
+    Check "answering yes reports the result" ($done -ne [IntPtr]::Zero)
+    if ($done -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $done $T.Caption) }
+    Start-Sleep -Milliseconds 600
+  }
+  $newLocation = (Get-ItemProperty -Path $uninstallKey -Name "InstallLocation" -ErrorAction SilentlyContinue).InstallLocation
+  Check "the uninstall entry moved to this folder" ($newLocation -eq $SevenZipDir) "(got [$newLocation])"
+  $newReg = (Get-ItemProperty -Path $regKey -Name "LastRegistered" -ErrorAction SilentlyContinue).LastRegistered
+  Check "the registration records this folder" ($newReg -eq $SevenZipDir) "(got [$newReg])"
+  Check "the shortcuts now point at this folder (desktop)" (Test-Path -LiteralPath $deskShortcut)
+  Stop-Fm $p
+
+  # ---- C: a registration whose folder still holds another copy is left alone
+  $sibling = Join-Path $workDir "sibling-copy"
+  New-Item -ItemType Directory -Force -Path $sibling | Out-Null
+  Copy-Item -LiteralPath $fmExe -Destination (Join-Path $sibling "7zFM.exe") -Force
+  Set-ItemProperty -Path $regKey -Name "LastRegistered" -Value $sibling -Type String
+  Remove-ItemProperty -Path $regKey -Name "MoveAskedFrom" -ErrorAction SilentlyContinue
+  Remove-ItemProperty -Path $regKey -Name "MoveAskedTo" -ErrorAction SilentlyContinue
   $p = Start-Fm ""
   $quiet = Wait-Dialog ([uint32]$p.Id) $T.Caption 6
-  Check "a registration for a missing folder is cleaned up without a question" ($quiet -eq [IntPtr]::Zero)
-  $regGone = (Get-ItemProperty -Path $regKey -Name "LastRegistered" -ErrorAction SilentlyContinue).LastRegistered
-  Check "the dead registration was dropped" ([string]::IsNullOrEmpty($regGone)) "(got [$regGone])"
-  Check "the broken uninstall entry was removed" (-not (Test-Path -LiteralPath $uninstallKey))
+  Check "another copy's registration is not taken over (no question)" ($quiet -eq [IntPtr]::Zero)
+  $stillSibling = (Get-ItemProperty -Path $regKey -Name "LastRegistered" -ErrorAction SilentlyContinue).LastRegistered
+  Check "the other copy's registration is left untouched" ($stillSibling -eq $sibling) "(got [$stillSibling])"
   Stop-Fm $p
+  Remove-Item -Recurse -Force $sibling -ErrorAction SilentlyContinue
 }
 
 # the shortcuts and the entry this test created are removed again, whatever happened above

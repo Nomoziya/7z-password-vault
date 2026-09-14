@@ -273,7 +273,7 @@ if ($opt -ne [IntPtr]::Zero) {
   Write-Host "`n=== 7zFM options, password page (reached: $done) ===" -ForegroundColor Cyan
   # measure only the password page controls
   $r = [Meas2]::Measure($opt)
-  $ids = @(2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611,2612,2613,2614)
+  $ids = @(2601,2602,2603,2604,2605,2606,2607,2608,2609,2610,2611,2612,2613,2614,2615,2616)
   $shown = 0
   foreach ($line in $r) {
     if ($line -match 'id=(\d+)') { if ($ids -contains [int]$Matches[1]) { Write-Host "    CLIPPED  $line" -ForegroundColor Red; $shown++ } }

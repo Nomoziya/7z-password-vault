@@ -57,7 +57,7 @@ Two builds are published for every release:
 | Build | What it is |
 |-------|------------|
 | `7z-password-vault-<version>-win64-portable.zip` | **The download.** Unpack anywhere and run `7zFM.exe`. Nothing is written outside that folder except 7-Zip's own per-user settings in `HKCU\Software\7-Zip`, plus what you agree to on the first start (see below). |
-| `install.cmd` (inside the zip) | Optional manual entry point: creates the Start Menu / desktop shortcuts and the entry in *Apps & features* right away. The program offers the same thing itself on its **first start**, after asking — current user only, no administrator rights, and "No" leaves everything working. |
+| `install.cmd` (inside the zip) | Optional manual entry point: creates the Start Menu / desktop shortcuts and the entry in *Apps & features* right away. The program offers the same thing itself on its **first start**, after asking — current user only, no administrator rights, and "No" leaves everything working. There is also a button for it on **Tools → Options → Password manager**, and a portable copy that is **moved** notices that its shortcuts and uninstall entry still point at the old folder and offers to update them (once per move; another copy that still exists is never taken over). A folder on a removable or network drive is not offered automatically. |
 | `uninstall.cmd` (inside the zip) | Removes the shortcuts, the *Apps & features* entry, the associations that point into this folder and the folder itself; it asks first whether the vault file should be kept. |
 
 Why there is no `setup.exe` any more: the 7-Zip SFX stub cannot run a program after unpacking
@@ -253,7 +253,7 @@ Based on 7-Zip source, under its original license (GNU LGPL, except unRar). See 
 | 包 | 说明 |
 |----|------|
 | `7z-password-vault-<版本>-win64-portable.zip` | **唯一发布的下载**：解压到任意位置直接运行 `7zFM.exe`。除了 7-Zip 自己的每用户设置（`HKCU\Software\7-Zip`）与你在首次启动时同意的内容之外，不往目录外写任何东西。 |
-| `install.cmd`（在压缩包里） | 可选的手动入口：立刻创建开始菜单 / 桌面快捷方式与「应用和功能」登记项。程序**首次启动**时自己也会问一次同样的事 —— 只写当前用户、不需要管理员权限，选「否」也照常使用。 |
+| `install.cmd`（在压缩包里） | 可选的手动入口：立刻创建开始菜单 / 桌面快捷方式与「应用和功能」登记项。程序**首次启动**时自己也会问一次同样的事 —— 只写当前用户、不需要管理员权限，选「否」也照常使用。**工具 → 选项 → 密码管理器**页里也有一个按钮可随时做；便携副本被**移动**后，程序会发现快捷方式与卸载登记仍指向旧目录并询问是否更新（每次移动只问一次；另一份仍然存在的副本不会被抢占）。可移动盘 / 网络盘上的目录不会自动提议登记。 |
 | `uninstall.cmd`（在压缩包里） | 删除快捷方式、指向本目录的关联、「应用和功能」登记项和整个目录；删除前会先问是否保留密码库。 |
 
 为什么不再有 `setup.exe`：7-Zip 的 SFX 存根**不能**在解包后执行程序（实测：它不解析配置），所以自解压包
