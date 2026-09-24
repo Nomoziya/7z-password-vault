@@ -17,5 +17,6 @@
 /* action button: create the shortcuts and the "Apps & features" entry now, without waiting
    for the first-start question (or after it was answered with "no") */
 #define IDB_PASSWORD_SETUP        2616
+#define IDB_PASSWORD_RESTORE      2617
 
 #define IDE_PASSWORD_VAULT_PATH   101

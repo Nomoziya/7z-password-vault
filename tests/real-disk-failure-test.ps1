@@ -27,6 +27,7 @@ $record = [ordered]@{
   seedExitCode = $null
   seedVaultBytes = $null
   diskFailureExitCode = $null
+  restoreFailureExitCode = $null
   diskFailureLog = (Join-Path $run 'disk-failure.log')
   cleanup = 'NOT_RUN'
 }
@@ -198,6 +199,10 @@ public static class VaultNativeDiskFill {
   $diskExit = $LASTEXITCODE
   $record.diskFailureExitCode = $diskExit
   if ($diskExit -ne 0) { throw "Vault save failure invariants failed on the full isolated volume (exit=$diskExit)." }
+  $phase = 'vault-restore-on-full-volume'
+  & $native disk-full-restore ($vaultPath + '.restore') 2>&1 | Tee-Object -FilePath (Join-Path $run 'restore-failure.log')
+  $record.restoreFailureExitCode = $LASTEXITCODE
+  if ($record.restoreFailureExitCode -ne 0) { throw "Vault restore failure invariants failed on the full isolated volume (exit=$($record.restoreFailureExitCode))." }
   $record.classification = 'PASS'
   Write-Host "PASS: the isolated $letter`: VHD exhausted writes (phase=$($fillResult.Phase), block=$($fillResult.SmallestBlockBytesTried), Win32=$($fillResult.Win32Error), reportedFree=$($record.availableBytesAfterFill)); the real vault save preserved primary, backup, memory, and password-cache invariants."
 } catch {

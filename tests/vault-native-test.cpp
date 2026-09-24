@@ -12,6 +12,7 @@
 #include <vector>
 #include "../CPP/7zip/UI/FileManager/PasswordVault.h"
 #include "../CPP/7zip/UI/Common/ZipRegistry.h"
+#include "../CPP/Common/Lang.h"
 static int fault = 0;
 static DWORD protectError = 0;
 static unsigned flushCalls = 0, moveCalls = 0;
@@ -24,6 +25,7 @@ static BOOL TestProtect(DATA_BLOB *in, LPCWSTR description, DATA_BLOB *entropy,
 }
 static bool rememberMaster = true;
 static bool useMasterSetting = false;
+static const wchar_t *scriptedMaster = NULL;
 static UString fixtureRoot;
 static UString configuredPath;
 static bool CreateTestSymlink(const UString &link, const UString &target) {
@@ -93,6 +95,10 @@ static BOOL TestMove(LPCWSTR from, LPCWSTR to, DWORD flags) {
   const bool backup=wcslen(to)>=4 && wcscmp(to+wcslen(to)-4,L".bak")==0;
   if (fault == 3 && !backup) ExitProcess(73);
   if (fault == 4 && !backup) { SetLastError(ERROR_ACCESS_DENIED); return FALSE; }
+  if (fault == 6 && !backup) {
+    if (!MoveFileExW(from,to,flags)) return FALSE;
+    ExitProcess(74);
+  }
   return MoveFileExW(from, to, flags);
 }
 #define FlushFileBuffers TestFlush
@@ -113,7 +119,13 @@ void NPasswordVault::CInfo::Load() {
 }
 void NPasswordVault::CInfo::Save() const {}
 void NPasswordVault::CInfo::SaveVaultPath(const FString &) {}
-INT_PTR NWindows::NControl::CModalDialog::Create(LPCWSTR, HWND) { return IDCANCEL; }
+INT_PTR NWindows::NControl::CModalDialog::Create(LPCWSTR, HWND) {
+  if (scriptedMaster) {
+    static_cast<CPasswordMasterDialog *>(this)->Password = UString(scriptedMaster);
+    return IDOK;
+  }
+  return IDCANCEL;
+}
 bool NWindows::NControl::CDialog::OnMessage(UINT, WPARAM, LPARAM) { return false; }
 bool NWindows::NControl::CDialog::OnCommand(unsigned, unsigned, LPARAM) { return false; }
 bool NWindows::NControl::CDialog::OnButtonClicked(unsigned, HWND) { return false; }
@@ -149,9 +161,190 @@ static DWORD Wait(PROCESS_INFORMATION &pi) {
   Require(WaitForSingleObject(pi.hProcess,120000)==WAIT_OBJECT_0,"child completion");
   DWORD code=1; GetExitCodeProcess(pi.hProcess,&code); CloseHandle(pi.hThread); CloseHandle(pi.hProcess); return code;
 }
+static void RestoreTests(const UString &path) {
+  UString error;
+  useMasterSetting=false; rememberMaster=true;
+  const UString backup=path+L".bak";
+  {
+    CPasswordVaultRestore none;
+    Require(!none.Prepare(path,NULL,error) && none.Stage==L"backup-missing","restore rejects missing backup");
+  }
+  {
+    CPasswordVault seed; seed.SetPath(path);
+    Require(seed.Load(NULL,error),"restore seed load"); Add(seed,L"first");
+    Require(seed.Save(error),"restore seed generation 1"); Add(seed,L"second");
+    Require(seed.Save(error),"restore seed generation 2");
+  }
+  const auto old=Bytes(backup), current=Bytes(path);
+  {
+    CPasswordVault snapshot; snapshot.SetPath(backup);
+    Require(snapshot.Load(NULL,error,true),"read-only import/restore snapshot authenticates");
+    Add(snapshot,L"must-not-save");
+    Require(!snapshot.Save(error) && Bytes(backup)==old,"read-only snapshot cannot write or bypass session coordination");
+    Require(!VaultFileExists(backup+L".session.lock"),"read-only snapshot creates no sidecar on source media");
+  }
+  {
+    CPasswordVault live; live.SetPath(path); Require(live.Load(NULL,error),"restore active session");
+    CPasswordVaultRestore r;
+    Require(r.Prepare(path,NULL,error),"restore prepares despite active window");
+    Require(!r.Commit(error) && r.Stage==L"vault-in-use-close-password-windows" &&
+        Bytes(path)==current && Bytes(backup)==old && live.Entries().Size()==2,
+        "restore refuses stale session without changing data");
+  }
+  {
+    auto child=Spawn(L"restore-lease",path);
+    UString ready=path+L".ready";
+    for(unsigned i=0;i<100 && !VaultFileExists(ready);i++) Sleep(50);
+    Require(VaultFileExists(ready),"child acquired shared vault session");
+    CPasswordVaultRestore r; Require(r.Prepare(path,NULL,error),"cross-process restore prepare");
+    Require(!r.Commit(error) && Bytes(path)==current,"other process blocks restore");
+    Require(TerminateProcess(child.hProcess,74)!=0 && Wait(child)==74,"terminate only owned lease-test child");
+    Require(DeleteFileW(ready)!=0,"remove owned ready signal");
+  }
+  {
+    CPasswordVaultRestore r; Require(r.Prepare(path,NULL,error),"prepare after crashed session releases lease");
+    Put(backup,current);
+    Require(!r.Commit(error) && Bytes(path)==current && Bytes(backup)==current,"changed backup aborts restore");
+    Put(backup,old);
+  }
+  {
+    CPasswordVaultRestore r; Require(r.Prepare(path,NULL,error),"prepare target conflict");
+    Put(path,old);
+    Require(!r.Commit(error) && Bytes(path)==old,"changed primary aborts restore");
+    Put(path,current);
+  }
+  for(int f: {1,2}) {
+    CPasswordVaultRestore r; Require(r.Prepare(path,NULL,error),"prepare restore fault");
+    CPasswordVault::SetCachedMasterPassword(L"clear-me"); fault=f;
+    const bool ok=r.Commit(error); fault=0;
+    Require(!ok && Bytes(path)==current && Bytes(backup)==old && !CPasswordVault::HaveCachedMasterPassword(),
+        "restore flush/replace failure preserves bytes and clears cache");
+    Require(r.SystemError==(f==1?ERROR_DISK_FULL:ERROR_ACCESS_DENIED),"restore preserves the original failing API error code");
+    if(f==2) Require(Bytes(r.SafetyCopyPath)==current,"failed replacement retains verified safety copy");
+  }
+  {
+    CPasswordVaultRestore r; Require(r.Prepare(path,NULL,error),"prepare restore real ACL denial");
+    PSECURITY_DESCRIPTOR fileAcl=NULL,dirAcl=NULL;
+    const UString parent=path.Left((unsigned)path.ReverseFind_PathSepar());
+    Require(DenyCurrentUserAccess(path,DELETE,fileAcl),"deny restore delete primary");
+    if(!DenyCurrentUserAccess(parent,FILE_DELETE_CHILD,dirAcl)) {
+      RestoreDacl(path,fileAcl); Require(false,"deny restore parent delete child");
+    }
+    const bool ok=r.Commit(error);
+    const bool restoredFile=RestoreDacl(path,fileAcl),restoredDir=RestoreDacl(parent,dirAcl);
+    Require(restoredFile && restoredDir,"restore fixture ACLs");
+    Require(!ok && r.Stage==L"replace-primary" && Bytes(path)==current && Bytes(backup)==old,
+        "real ACL denial refuses recovery without modifying main or backup");
+  }
+  {
+    CPasswordVaultRestore r; Require(r.Prepare(path,NULL,error),"prepare successful restore");
+    CPasswordVault unrelated; unrelated.SetPath(path+L".unrelated");
+    Require(unrelated.Load(NULL,error),"unrelated vault has its own session");
+    Require(r.EntryCount()==1 && !r.MasterMode() && r.Commit(error) && r.Committed,
+        "restore commits authenticated previous generation");
+    Require(Bytes(path)==old && Bytes(backup)==old && Bytes(r.SafetyCopyPath)==current,
+        "restore exact bytes and safety copy; source backup unchanged");
+    Require(!r.Commit(error),"restore proposal is single use");
+  }
+  {
+    CPasswordVaultRestore r; Require(r.Prepare(path,NULL,error) && r.AlreadyCurrent(),"identical restore is detected");
+    Require(r.Commit(error) && !r.Committed && r.SafetyCopyPath.IsEmpty(),"identical restore writes no copies");
+  }
+  for(int scenario=0;scenario<2;scenario++) {
+    if(scenario==0) Require(DeleteFileW(path)!=0,"remove primary for missing-primary restore");
+    else Put(path,{1,2,3});
+    CPasswordVaultRestore r;
+    Require(r.Prepare(path,NULL,error) && r.Commit(error) && Bytes(path)==old && Bytes(backup)==old,
+        "restore works with missing or damaged primary");
+    if(scenario==1) Require(Bytes(r.SafetyCopyPath)==std::vector<Byte>({1,2,3}),"damaged primary preserved exactly");
+  }
+  for(int scenario=0;scenario<4;scenario++) {
+    auto damaged=old;
+    if(scenario==0) damaged.clear();
+    if(scenario==1) damaged[4]=3;
+    if(scenario==2) damaged.resize(7);
+    if(scenario==3) damaged.back()^=0x80;
+    Put(backup,damaged);
+    CPasswordVaultRestore r;
+    Require(!r.Prepare(path,NULL,error) && !r.Commit(error) && Bytes(path)==old && Bytes(backup)==damaged,
+        "restore rejects empty, legacy, truncated or tampered backup");
+  }
+  Put(backup,old);
+  for(int crash: {3,6}) {
+    Put(path,current);
+    auto child=Spawn(crash==3?L"restore-crash-before":L"restore-crash-after",path);
+    Require(Wait(child)==(crash==3?73:74),"restore child stopped at requested commit boundary");
+    Require(Bytes(path)==(crash==3?current:old) && Bytes(backup)==old,
+        "restore process crash leaves a complete generation and intact backup");
+    WIN32_FIND_DATAW found;
+    HANDLE search=FindFirstFileW(path+L".pre-restore-*",&found);
+    Require(search!=INVALID_HANDLE_VALUE,"restore crash leaves encrypted safety copy");
+    bool valid=false;
+    do {
+      UString saved=path.Left((unsigned)path.ReverseFind_PathSepar()+1); saved+=found.cFileName;
+      if(Bytes(saved)==current) valid=true;
+    } while(FindNextFileW(search,&found));
+    FindClose(search);
+    Require(valid,"crash safety copy contains complete original ciphertext");
+  }
+  Require(DeleteFileW(backup)!=0 && CreateDirectoryW(backup,NULL)!=0,"restore backup-directory fixture");
+  { CPasswordVaultRestore r; Require(!r.Prepare(path,NULL,error),"restore rejects backup directory"); }
+  Require(RemoveDirectoryW(backup)!=0 && CreateTestSymlink(backup,path),"restore backup-symlink fixture");
+  { CPasswordVaultRestore r; Require(!r.Prepare(path,NULL,error),"restore rejects backup symlink"); }
+  Require(DeleteFileW(backup)!=0 && CreateHardLinkW(backup,path,NULL)!=0,"restore hardlink fixture");
+  { CPasswordVaultRestore r; Require(!r.Prepare(path,NULL,error),"restore rejects hardlink aliases"); }
+  Require(DeleteFileW(backup)!=0,"remove owned backup link"); Put(backup,old);
+  {
+    CPasswordVault v; v.SetPath(path); Require(v.Load(NULL,error),"reload restored library");
+    Add(v,L"after-restore"); Require(v.Save(error) && Bytes(backup)==old,"normal save after restore rotates backup");
+    CPasswordVault::SetCachedMasterPassword(L"old-backup-master");
+    Require(v.Save(error,NULL,1),"create master generation");
+    CPasswordVault::SetCachedMasterPassword(L"new-current-master");
+    Require(v.Save(error,NULL,1),"change master and retain old master backup");
+  }
+  const auto masterCurrent=Bytes(path),masterBackup=Bytes(backup);
+  for(const wchar_t *password: { (const wchar_t *)NULL, L"wrong", L"old-backup-master" }) {
+    scriptedMaster=password;
+    CPasswordVault::SetCachedMasterPassword(L"new-current-master");
+    CPasswordVaultRestore r;
+    const bool prepared=r.Prepare(path,NULL,error);
+    Require(!CPasswordVault::HaveCachedMasterPassword(),"restore always clears master cache");
+    if(!password || wcscmp(password,L"wrong")==0)
+      Require(!prepared && Bytes(path)==masterCurrent && Bytes(backup)==masterBackup,"cancel or wrong backup password leaves files intact");
+    else Require(prepared && r.MasterMode() && r.Commit(error) && Bytes(path)==masterBackup,
+        "old backup password restores after master password change");
+  }
+  scriptedMaster=NULL; useMasterSetting=false;
+  puts("PASS: authenticated restore, safety copies, conflicts, shared sessions/crash release, real ACL, faults, formats, paths, and old master password");
+}
 int wmain(int argc, wchar_t **argv) {
   if(argc<3) return 2;
   const UString path(argv[2]); UString error;
+  if(wcscmp(argv[1],L"suite")==0 || wcscmp(argv[1],L"languages")==0) {
+    for(const char *id: {"en","zh-cn","zh-tw"}) {
+      UString name=L"Lang\\";
+      for(const char *c=id;*c;c++) name+=(wchar_t)*c;
+      name+=L".txt";
+      CLang lang;
+      fprintf(stderr,"LANGUAGE: %s\n",id);
+      Require(lang.Open(name,"7-Zip"),"production language parser accepts complete resource");
+      Require(lang.Get(2617)!=NULL,"restore button translation exists");
+      for(unsigned n=3880;n<=3887;n++) Require(lang.Get(n)!=NULL,"restore message translation exists");
+      for(const wchar_t *marker: {L"{0}",L"{1}",L"{2}",L"{3}",L"{4}"})
+        Require(wcsstr(lang.Get(3882),marker)!=NULL,"restore confirmation retains every substitution");
+    }
+    puts("PASS: production language parser validates en, zh-cn, zh-tw and restore messages");
+    if(wcscmp(argv[1],L"languages")==0) return 0;
+  }
+  if(wcscmp(argv[1],L"restore-lease")==0) {
+    CPasswordVault v; v.SetPath(path); Require(v.Load(NULL,error),"child holds vault lease");
+    Put(path+L".ready",{}); Sleep(120000); return 0;
+  }
+  if(wcscmp(argv[1],L"restore-crash-before")==0 || wcscmp(argv[1],L"restore-crash-after")==0) {
+    CPasswordVaultRestore r; Require(r.Prepare(path,NULL,error),"crash restore prepare");
+    fault=wcscmp(argv[1],L"restore-crash-before")==0?3:6;
+    r.Commit(error); return 2;
+  }
   if(wcscmp(argv[1],L"acl")==0) {
     // This isolated mode exercises the production save/backup path with a real
     // Windows DACL while avoiding DPAPI, whose master keys may be unavailable
@@ -228,6 +421,36 @@ int wmain(int argc, wchar_t **argv) {
         "seed encrypted vault before filling isolated volume");
     CPasswordVault::ClearCachedMasterPassword();
     puts("PASS: encrypted master-password fixture seeded on the test volume");
+    {
+      CPasswordVault recovery; recovery.SetPath(path+L".restore");
+      Require(recovery.Load(NULL,error),"restore full-volume seed load");
+      recovery.Entries().Add(seed);
+      CPasswordVault::SetCachedMasterPassword(L"real-disk-test-master");
+      Require(recovery.Save(error),"restore full-volume generation 1");
+      Add(recovery,L"second-generation");
+      CPasswordVault::SetCachedMasterPassword(L"real-disk-test-master");
+      Require(recovery.Save(error),"restore full-volume generation 2");
+    }
+    {
+      scriptedMaster=L"real-disk-test-master";
+      CPasswordVaultRestore r;
+      Require(r.Prepare(path+L".restore",NULL,error),"restore full-volume preflight and lock files");
+      scriptedMaster=NULL;
+    }
+    return 0;
+  }
+  if(wcscmp(argv[1],L"disk-full-restore")==0) {
+    const auto before=Bytes(path),backup=Bytes(path+L".bak");
+    scriptedMaster=L"real-disk-test-master";
+    CPasswordVaultRestore r;
+    Require(r.Prepare(path,NULL,error),"authenticate restore backup on full volume");
+    const bool ok=r.Commit(error);
+    fwprintf(stderr,L"REAL-DISK-RESTORE: committed=%ls stage=%ls Win32=%lu\n",
+        ok?L"yes":L"no",r.Stage.Ptr(),r.SystemError);
+    Require(!ok && (r.SystemError==ERROR_DISK_FULL || r.SystemError==ERROR_HANDLE_DISK_FULL) &&
+        Bytes(path)==before && Bytes(path+L".bak")==backup && !CPasswordVault::HaveCachedMasterPassword(),
+        "real full-volume restore preserves primary, backup and clears cache");
+    puts("PASS: restore transaction refused on genuinely full volume");
     return 0;
   }
   if(wcscmp(argv[1],L"disk-full")==0) {
@@ -474,6 +697,7 @@ int wmain(int argc, wchar_t **argv) {
   for(unsigned id=1;id<=2;id++) for(unsigned i=0;i<100;i++) {
     UString name=L"writer-"; name.Add_UInt32(id); name+=L"-"; name.Add_UInt32(i); Require(a.FindByName(name)>=0,"all concurrent records present");
   }
+  RestoreTests(path+L".restore");
   puts("PASS: default paths, encrypted backup rotation/recovery/failures, cache clearing, real DPAPI/AES, cancellation, corruption, rollback, locked files, crash recovery, and 200 concurrent saves");
   return 0;
 }

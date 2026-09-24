@@ -6,6 +6,7 @@
 #include <dpapi.h>
 #include <bcrypt.h>
 #include <shlobj.h>
+#include <aclapi.h>
 
 #include "../../../Windows/FileIO.h"
 #include "../../../Windows/ErrorMsg.h"
@@ -120,7 +121,14 @@ CPasswordVaultEntry::~CPasswordVaultEntry()
 
 CPasswordVault::~CPasswordVault()
 {
+  ReleaseSession();
   ClearEntries();
+}
+
+void CPasswordVault::ReleaseSession()
+{
+  if (_session != INVALID_HANDLE_VALUE) ::CloseHandle(_session);
+  _session = INVALID_HANDLE_VALUE;
 }
 
 void CPasswordVault::ClearEntries()
@@ -380,6 +388,29 @@ static void EnsureFolderExists(const UString &filePath)
   ::CreateDirectoryW(dir, NULL);
 }
 
+// Empty coordination file, never vault data. Keep it in place: deleting a lock
+// file while another process uses it would split the coordination identity.
+// Readers allow other readers; restore requests a share-none handle. The OS
+// releases handles on crashes. All opens happen under the canonical save mutex.
+static HANDLE OpenVaultSession(const UString &path, bool exclusive)
+{
+  const UString lease = path + L".session.lock";
+  if (!IsSafeVaultLeaf(lease)) return INVALID_HANDLE_VALUE;
+  HANDLE h = ::CreateFileW(lease, GENERIC_READ, exclusive ? 0 : FILE_SHARE_READ,
+      NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+  if (h == INVALID_HANDLE_VALUE) return h;
+  BY_HANDLE_FILE_INFORMATION info;
+  if (!::GetFileInformationByHandle(h, &info) ||
+      (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) ||
+      info.nNumberOfLinks != 1 || info.nFileSizeHigh != 0 || info.nFileSizeLow != 0)
+  {
+    ::CloseHandle(h);
+    ::SetLastError(ERROR_ACCESS_DENIED);
+    return INVALID_HANDLE_VALUE;
+  }
+  return h;
+}
+
 static bool WriteBuf(COutFile &f, const void *data, size_t size)
 {
   return f.WriteFull(data, size);
@@ -388,6 +419,11 @@ static bool WriteBuf(COutFile &f, const void *data, size_t size)
 class CVaultOutFile: public COutFile
 {
 public:
+  bool CreateRestore(const UString &path)
+  {
+    return Create(path, GENERIC_WRITE | WRITE_DAC, FILE_SHARE_READ, CREATE_NEW,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH);
+  }
   bool CreateExclusive(const UString &path)
   {
     return Create(path, GENERIC_WRITE, FILE_SHARE_READ, CREATE_NEW,
@@ -688,8 +724,10 @@ UString CPasswordVault::GetConfiguredPath()
 // ---------------------------------------------------------------------------
 // load / save
 
-bool CPasswordVault::Load(HWND parent, UString &errorMessage)
+bool CPasswordVault::Load(HWND parent, UString &errorMessage, bool snapshotOnly)
 {
+  ReleaseSession();
+  _snapshotOnly = snapshotOnly;
   errorMessage.Empty();
   ClearEntries();
   _baseline.Clear();
@@ -718,6 +756,24 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
         L"无法打开密码库文件：\n{0}\n{1}", _path, ::GetLastError());
     return false;
   }
+
+  if (!snapshotOnly)
+  {
+    EnsureFolderExists(_path);
+    _session = OpenVaultSession(_path, false);
+  }
+  if (!snapshotOnly && _session == INVALID_HANDLE_VALUE)
+  {
+    SetPathError(errorMessage, IDT_PASSWORD_ERR_OPEN,
+        L"无法打开密码库文件：\n{0}\n{1}", _path, ::GetLastError());
+    return false;
+  }
+  struct CFailedLoadSession
+  {
+    CPasswordVault &Vault;
+    CFailedLoadSession(CPasswordVault &v): Vault(v) {}
+    ~CFailedLoadSession() { if (Vault._readFailed) Vault.ReleaseSession(); }
+  } failedSession(*this);
 
   CInFile f;
   if (!f.Open(_path))
@@ -840,10 +896,10 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent, int modeOverride)
   }
   EnsureFolderExists(_path);
   CVaultSaveLock lock;
-  if (_readFailed || !lock.Acquire(_path))
+  if (_readFailed || _snapshotOnly || !lock.Acquire(_path))
   {
     SetPathError(errorMessage, IDT_PASSWORD_ERR_OPEN,
-        L"无法打开密码库文件：\n{0}\n{1}", _path, _readFailed ? 0 : ::GetLastError());
+        L"无法打开密码库文件：\n{0}\n{1}", _path, _snapshotOnly ? ERROR_ACCESS_DENIED : (_readFailed ? 0 : ::GetLastError()));
     return false;
   }
 
@@ -1438,6 +1494,206 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage, HWND parent
   }
 
   plain.Wipe();
+  return true;
+}
+
+namespace
+{
+struct CRestoreHandle
+{
+  HANDLE Value;
+  CRestoreHandle(HANDLE h = INVALID_HANDLE_VALUE): Value(h) {}
+  ~CRestoreHandle()
+  {
+    const DWORD error = ::GetLastError();
+    if (Value != INVALID_HANDLE_VALUE) ::CloseHandle(Value);
+    ::SetLastError(error);
+  }
+};
+struct CRestoreCacheClear
+{
+  ~CRestoreCacheClear() { CPasswordVault::ClearCachedMasterPassword(); }
+};
+struct CRestoreSecurity
+{
+  PSECURITY_DESCRIPTOR Value;
+  CRestoreSecurity(): Value(NULL) {}
+  ~CRestoreSecurity() { if (Value) ::LocalFree(Value); }
+};
+
+bool ReadRestoreImage(const UString &path, CByteBuffer &bytes, bool &exists,
+    FILETIME *time = NULL)
+{
+  bytes.Free();
+  exists = false;
+  if (!IsSafeVaultLeaf(path)) return false;
+  CRestoreHandle f(::CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL,
+      OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL));
+  if (f.Value == INVALID_HANDLE_VALUE)
+    return ::GetLastError() == ERROR_FILE_NOT_FOUND;
+  BY_HANDLE_FILE_INFORMATION info;
+  if (!::GetFileInformationByHandle(f.Value, &info)) return false;
+  if ((info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) ||
+      info.nNumberOfLinks != 1 || info.nFileSizeHigh || info.nFileSizeLow > kMaxCipherSize + 65536)
+  {
+    ::SetLastError(ERROR_INVALID_DATA);
+    return false;
+  }
+  exists = true;
+  if (time) *time = info.ftLastWriteTime;
+  bytes.Alloc(info.nFileSizeLow);
+  DWORD read = 0;
+  if (!::ReadFile(f.Value, bytes, info.nFileSizeLow, &read, NULL)) return false;
+  if (read != info.nFileSizeLow) { ::SetLastError(ERROR_HANDLE_EOF); return false; }
+  return true;
+}
+
+bool WriteRestoreImage(const UString &path, const CByteBuffer &bytes,
+    PSECURITY_DESCRIPTOR security, bool &created)
+{
+  CVaultOutFile f;
+  if (!f.CreateRestore(path)) return false;
+  created = true;
+  // Apply the old file's DACL before writing any ciphertext. Mark it protected
+  // so the directory cannot add broader inherited permissions to this copy.
+  bool ok = !security || ::SetKernelObjectSecurity(f.GetHandle(),
+      DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, security) != 0;
+  if (ok) ok = WriteBuf(f, bytes, bytes.Size()) && ::FlushFileBuffers(f.GetHandle());
+  DWORD error = ok ? ERROR_SUCCESS : ::GetLastError();
+  if (!f.Close() && ok) { ok = false; error = ::GetLastError(); }
+  if (!ok) { ::SetLastError(error); return false; }
+  CByteBuffer check;
+  bool exists = false;
+  if (!ReadRestoreImage(path, check, exists)) return false;
+  if (!exists || check != bytes) { ::SetLastError(ERROR_CRC); return false; }
+  return true;
+}
+}
+
+bool CPasswordVaultRestore::Fail(const wchar_t *stage, DWORD code, UString &error)
+{
+  _ready = false;
+  Stage = stage;
+  SystemError = code;
+  SetPathError(error, IDT_PASSWORD_RESTORE_FAILED,
+      L"恢复未提交，当前密码库和备份未改变。\n{0}\n{1}", _path, code);
+  error += L"\n[";
+  error += stage;
+  error += L", Win32=";
+  error.Add_UInt32(code);
+  error += L"]";
+  CPasswordVault::ClearCachedMasterPassword();
+  ::SetLastError(code);
+  return false;
+}
+
+bool CPasswordVaultRestore::Prepare(const UString &path, HWND parent, UString &error)
+{
+  CRestoreCacheClear clear;
+  CPasswordVault::ClearCachedMasterPassword();
+  _ready = false;
+  Committed = false;
+  SafetyCopyPath.Empty();
+  SystemError = 0;
+  error.Empty();
+  _backup.SetPath(UString());
+  _path = PasswordVault_NormalizePath(path);
+  _canonical = GetCanonicalVaultPath(_path);
+  Stage = L"snapshot";
+  CByteBuffer source;
+  bool exists = false;
+  {
+    CVaultSaveLock lock;
+    if (!lock.Acquire(_path) || !ReadRestoreImage(_path, _original, _existed) ||
+        !ReadRestoreImage(_path + L".bak", source, exists, &BackupTime))
+      return Fail(L"snapshot", ::GetLastError(), error);
+  }
+  if (!exists) return Fail(L"backup-missing", ERROR_FILE_NOT_FOUND, error);
+  if (source.Size() < 6 || memcmp(source, kMagic, 4) != 0 || source[4] != 4)
+    return Fail(L"backup-format-v4-required", ERROR_INVALID_DATA, error);
+  Stage = L"authenticate-backup";
+  _backup.SetPath(_path + L".bak");
+  // No main-vault mutex is held while the user supplies the backup's password.
+  if (!_backup.Load(parent, error, true)) return false;
+  if (!_backup._loadedExisted || _backup._loadedImage != source)
+    return Fail(L"backup-changed", ERROR_REVISION_MISMATCH, error);
+  _ready = true;
+  Stage = L"ready";
+  return true;
+}
+
+bool CPasswordVaultRestore::Commit(UString &error)
+{
+  CRestoreCacheClear clear;
+  error.Empty();
+  if (!_ready || Committed) return Fail(L"not-prepared", ERROR_INVALID_STATE, error);
+  _ready = false; // Single-use, even if this attempt fails.
+  CVaultSaveLock lock;
+  if (!lock.Acquire(_path)) return Fail(L"save-lock", ::GetLastError(), error);
+  if (GetCanonicalVaultPath(_path) != _canonical)
+    return Fail(L"parent-changed", ERROR_REVISION_MISMATCH, error);
+  const int separator = _canonical.ReverseFind_PathSepar();
+  const UString folder = _canonical.Left((unsigned)separator + 1);
+  CRestoreHandle parent(::CreateFileW(folder, FILE_READ_ATTRIBUTES,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL));
+  if (parent.Value == INVALID_HANDLE_VALUE || GetCanonicalVaultPath(_path) != _canonical)
+    return Fail(L"pin-parent", ERROR_ACCESS_DENIED, error);
+  CRestoreHandle session(OpenVaultSession(_path, true));
+  if (session.Value == INVALID_HANDLE_VALUE)
+    return Fail(L"vault-in-use-close-password-windows", ::GetLastError(), error);
+  CByteBuffer current, backup;
+  bool exists = false, backupExists = false;
+  if (!ReadRestoreImage(_path, current, exists) ||
+      !ReadRestoreImage(_path + L".bak", backup, backupExists))
+    return Fail(L"recheck", ::GetLastError(), error);
+  if (exists != _existed || current != _original || !backupExists || backup != _backup._loadedImage)
+    return Fail(L"files-changed", ERROR_REVISION_MISMATCH, error);
+  if (exists && current == backup) { Stage = L"already-current"; return true; }
+
+  CRestoreSecurity security;
+  if (exists)
+  {
+    const DWORD e = ::GetNamedSecurityInfoW((LPWSTR)(LPCWSTR)_path, SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION, NULL, NULL, NULL, NULL, &security.Value);
+    if (e != ERROR_SUCCESS) return Fail(L"read-current-acl", e, error);
+  }
+  Byte nonce[16];
+  if (!GenRandom(nonce, sizeof(nonce))) return Fail(L"random-name", ERROR_GEN_FAILURE, error);
+  UString suffix;
+  SYSTEMTIME now;
+  ::GetSystemTime(&now);
+  suffix.Add_UInt32(now.wYear); suffix += L"-";
+  suffix.Add_UInt32(now.wMonth); suffix += L"-";
+  suffix.Add_UInt32(now.wDay); suffix += L"-";
+  const wchar_t hex[] = L"0123456789abcdef";
+  for (unsigned i = 0; i < sizeof(nonce); ++i)
+  { suffix += hex[nonce[i] >> 4]; suffix += hex[nonce[i] & 15]; }
+  if (exists)
+  {
+    SafetyCopyPath = _path + L".pre-restore-" + suffix;
+    CTempVaultCleanup partial(SafetyCopyPath);
+    if (!WriteRestoreImage(SafetyCopyPath, current, security.Value, partial.Created))
+      return Fail(L"preserve-current", ::GetLastError(), error);
+    partial.Created = false; // Keep a complete, verified safety copy even on later failure.
+  }
+  const UString temporary = _path + L".restore-tmp-" + suffix;
+  CTempVaultCleanup cleanup(temporary);
+  if (!WriteRestoreImage(temporary, backup, security.Value, cleanup.Created))
+    return Fail(L"write-restored-image", ::GetLastError(), error);
+  // Revalidate leaf safety immediately before publication. Never follow links.
+  if (!IsSafeVaultLeaf(_path) || !IsSafeVaultLeaf(_path + L".bak"))
+    return Fail(L"unsafe-target", ::GetLastError(), error);
+  if (GetCanonicalVaultPath(_path) != _canonical ||
+      !ReadRestoreImage(_path, current, exists) || !ReadRestoreImage(_path + L".bak", backup, backupExists) ||
+      exists != _existed || current != _original || !backupExists || backup != _backup._loadedImage)
+    return Fail(L"changed-before-replace", ERROR_REVISION_MISMATCH, error);
+  Stage = L"replace-primary";
+  const bool moved = exists ? MoveVaultFileWithRetry(temporary, _path) :
+      (::MoveFileExW(temporary, _path, MOVEFILE_WRITE_THROUGH) != 0);
+  if (!moved) return Fail(L"replace-primary", ::GetLastError(), error);
+  // No fallible parsing, credential prompt or allocation after the commit point.
+  Committed = true;
+  cleanup.Created = false;
   return true;
 }
 

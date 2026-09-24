@@ -57,6 +57,9 @@ struct CPasswordVaultEntry
 
 class CPasswordVault
 {
+  friend class CPasswordVaultRestore;
+  HANDLE _session = INVALID_HANDLE_VALUE;
+  void ReleaseSession();
   CObjectVector<CPasswordVaultEntry> _entries;
   CObjectVector<CPasswordVaultEntry> _baseline;
   CByteBuffer _loadedImage; // exact encrypted bytes, never a timestamp heuristic
@@ -70,6 +73,7 @@ class CPasswordVault
      the file may be replaced. */
   bool _haveLoadedMode = false;
   bool _loadedExisted = false;
+  bool _snapshotOnly = false;
 
   bool Load_DPAPI(NWindows::NFile::NIO::CInFile &f, Byte version, UString &errorMessage);
   bool Load_Master(HWND parent, NWindows::NFile::NIO::CInFile &f, UString &errorMessage);
@@ -82,11 +86,14 @@ class CPasswordVault
   bool ParseEntries(const Byte *data, size_t size, UString &errorMessage);
 
 public:
+  CPasswordVault() {}
+  CPasswordVault(const CPasswordVault &) = delete;
+  CPasswordVault &operator=(const CPasswordVault &) = delete;
   ~CPasswordVault();
   void ClearEntries();
   bool EnsureAuthenticated(HWND parent, UString &errorMessage, bool *reloaded = NULL);
 
-  void SetPath(const UString &path) { ClearEntries(); _baseline.Clear(); _loadedImage.Free(); _readFailed = true; _path = PasswordVault_NormalizePath(path); }
+  void SetPath(const UString &path) { ReleaseSession(); ClearEntries(); _baseline.Clear(); _loadedImage.Free(); _readFailed = true; _path = PasswordVault_NormalizePath(path); }
   const UString &GetPath() const { return _path; }
 
   CObjectVector<CPasswordVaultEntry> &Entries() { return _entries; }
@@ -111,7 +118,9 @@ public:
   static void SetConfiguredPath(const UString &path);
 
   // parent is used only to show the master-password prompt when needed.
-  bool Load(HWND parent, UString &errorMessage);
+  // snapshotOnly is for import/restore validation, never a live editable session.
+  // It works on read-only source media and Save() explicitly rejects it.
+  bool Load(HWND parent, UString &errorMessage, bool snapshotOnly = false);
   /* parent is used only when the master password has to be asked for again
      (the "remember" setting is off); it must be a window of the calling dialog,
      otherwise the prompt would appear unowned and can end up behind it. */
@@ -128,6 +137,30 @@ public:
   static bool HaveCachedMasterPassword();
   static bool GetMasterPassword(HWND parent, UString &password, UString &errorMessage);
   static bool PromptForMasterPassword(HWND parent, UString &password, UString &errorMessage);
+};
+
+// A single-use authenticated restore proposal. It never calls ordinary Save()
+// (which would rotate away the recovery source). Secrets stay in memory only.
+class CPasswordVaultRestore
+{
+  CPasswordVault _backup;
+  UString _path, _canonical;
+  CByteBuffer _original;
+  bool _existed = false, _ready = false;
+public:
+  UString SafetyCopyPath;
+  UString Stage;
+  DWORD SystemError = 0;
+  FILETIME BackupTime = {};
+  bool Committed = false;
+  ~CPasswordVaultRestore() { CPasswordVault::ClearCachedMasterPassword(); }
+  bool Prepare(const UString &path, HWND parent, UString &error);
+  bool Commit(UString &error);
+  bool MasterMode() const { return _backup._masterMode; }
+  unsigned EntryCount() const { return _backup.Entries().Size(); }
+  bool AlreadyCurrent() const { return _ready && _existed && _original == _backup._loadedImage; }
+private:
+  bool Fail(const wchar_t *stage, DWORD code, UString &error);
 };
 
 /* Localized text. The fallback (Chinese) is used only when the loaded lang

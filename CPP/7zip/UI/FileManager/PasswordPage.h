@@ -29,6 +29,7 @@ class CPasswordPage: public NWindows::NControl::CPropertyPage
   void OnClearMasterPassword();
   void OnExport();
   void OnImport();
+  void OnRestore();
 public:
 };
 

@@ -124,3 +124,12 @@
 /* a shortcut with our name belongs to another copy of the program that still exists: it is
    left alone instead of being taken over silently */
 #define IDT_PASSWORD_SHORTCUT_OTHER_COPY 3872
+
+#define IDT_PASSWORD_RESTORE_FAILED      3880
+#define IDT_PASSWORD_RESTORE_PENDING     3881
+#define IDT_PASSWORD_RESTORE_QUESTION    3882
+#define IDT_PASSWORD_RESTORE_DONE        3883
+#define IDT_PASSWORD_RESTORE_NO_COPY     3884
+#define IDT_PASSWORD_RESTORE_SAME        3885
+#define IDT_PASSWORD_RESTORE_SETTINGS    3886
+#define IDT_PASSWORD_RESTORE_BUSY        3887

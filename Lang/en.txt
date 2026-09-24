@@ -267,6 +267,8 @@ Show saved passwords in the list
 Show password of unnamed entries (easier to find)
 2616
 Create shortcuts / register uninstall...
+2617
+Restore previous version...
 2900
 About 7-Zip
 7-Zip is free software
@@ -481,6 +483,15 @@ Some shortcuts or the registry entry could not be created (a system policy may b
 The program folder seems to have changed:\n\nRegistered for: {0}\nRunning from: {1}\n\nUpdate the shortcuts and the uninstall entry in "Apps & features" to this location?
 3872
 Another copy or installation still uses this name or entry, so it was left alone:\n\n{0}\n\nTo make it point here, remove that copy first, or delete the shortcut / uninstall entry it registered.
+3880
+Restore was not committed. The current vault and backup are unchanged.\n{0}\n{1}
+Apply or cancel your pending settings changes before restoring.
+Restore the previous version?\n\nCurrent vault: {0}\nBackup: {1}\nEntries: {2}\nEncryption: {3}\nBackup file modified (UTC): {4}\n\nRecent changes will be undone and deleted entries may reappear. An encrypted copy of the current file will be kept. The backup may require the OLD master password. Close other password windows and older versions first.
+Previous version restored. The backup was not changed.\n\nEncrypted pre-restore copy:\n{0}
+The current vault did not exist, so no pre-restore copy was created.
+The current vault already matches the previous version. No files were changed.
+The file was restored, but settings could not be refreshed. Reopen settings and check the encryption mode.
+Another window is still using this vault. Close password windows using it and retry. No files were changed.
 3900
 Elapsed time:
 Remaining time:

@@ -1024,15 +1024,34 @@ function Set-VaultPathText([IntPtr]$edit, [string]$text) {
 }
 # Opens Tools -> Options on the password page and returns the dialog and its box.
 function Open-PasswordPage([uint32]$procId, [string]$checkName) {
-  $fm = [VaultUiTest]::FindDialogClass($procId, "7-Zip::FM")
-  [void][VaultUiTest]::PostMessageW($fm, 0x0111, [IntPtr]900, [IntPtr]::Zero)
+  $deadline = (Get-Date).AddSeconds(12)
+  $fm = [IntPtr]::Zero
+  while ($fm -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline) {
+    $fm = [VaultUiTest]::FindDialogClass($procId, '7-Zip::FM')
+    if ($fm -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
+  }
+  if ($fm -eq [IntPtr]::Zero) { throw "Main window missing for $checkName" }
+  # Cancel is posted asynchronously. Do not find the dying old property sheet.
+  $deadline = (Get-Date).AddSeconds(5)
+  while ([VaultUiTest]::FindDialog($procId,$T.Options) -ne [IntPtr]::Zero -and (Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 100
+  }
+  if ([VaultUiTest]::FindDialog($procId,$T.Options) -ne [IntPtr]::Zero) { throw 'Previous options window did not close.' }
+  [void][VaultUiTest]::PostMessageW($fm,0x0111,[IntPtr]900,[IntPtr]::Zero)
   $opt = Expect-Dialog $procId $T.Options $checkName 12
-  $tab = [VaultUiTest]::FindDescendant($opt, 12320)
+  $tab = Wait-Child $opt 12320 5
   $titles = @()
-  for ($i = 0; $i -lt [VaultUiTest]::GetTabCount($tab); $i++) { $titles += [VaultUiTest]::GetTabText($tab, $i) }
-  $idx = [array]::IndexOf($titles, $T.Page)
-  if ($idx -ge 0) { [VaultUiTest]::MoveCursorHome(); [void][VaultUiTest]::ClickTab($tab, $idx); Start-Sleep -Seconds 2 }
-  return @{ Opt = $opt; Edit = (Wait-Child $opt 101 5) }
+  for ($i=0; $i -lt [VaultUiTest]::GetTabCount($tab); $i++) { $titles += [VaultUiTest]::GetTabText($tab,$i) }
+  $idx = [array]::IndexOf($titles,$T.Page)
+  if ($idx -lt 0) { throw "Password page not registered: $titles" }
+  # PSM_SETCURSEL is the property sheet's public page-selection API. It runs
+  # normal activation notifications; no cross-process notification is fabricated.
+  [void][VaultUiTest]::Send($opt,0x465,[IntPtr]$idx,[IntPtr]::Zero)
+  $export = Wait-Child $opt 2612 5
+  if ($export -eq [IntPtr]::Zero) { throw 'Password page did not activate (export control absent).' }
+  $edit = [VaultUiTest]::FindChildByClassAndId($opt,'Edit',101)
+  if ($edit -eq [IntPtr]::Zero) { $edit = [VaultUiTest]::FindDescendant($opt,101) }
+  return @{ Opt=$opt; Edit=$edit }
 }
 # Presses OK on the page (which applies AND closes the options dialog) and answers the
 # "what about the file left behind" question if moving the vault raised it.
@@ -2082,23 +2101,23 @@ if (Test-Path $exported) {
 Check "process alive after the export / import round trip" (-not $p.HasExited)
 Stop-Fm $p
 if($baselineFm){
-  Write-Host "`n== 20b. review3 to review4 upgrade and isolated rollback ==" -ForegroundColor Cyan
+  Write-Host "`n== 20b. baseline to candidate upgrade and isolated rollback ==" -ForegroundColor Cyan
   $upgradeFailStart=$script:fail
   $preUpgrade=Join-Path $workDir 'pre-upgrade-vault.dat'
   $rollbackVault=Join-Path $workDir 'rollback-vault.dat'
-  if(-not(Test-Path -LiteralPath $moved -PathType Leaf)){throw 'Upgrade fixture missing the review3 vault'}
+  if(-not(Test-Path -LiteralPath $moved -PathType Leaf)){throw 'Upgrade fixture missing the baseline vault'}
   Copy-Item -LiteralPath $moved -Destination $preUpgrade -Force
   $beforeHash=(Get-FileHash -LiteralPath $preUpgrade).Hash
   Set-ItemProperty -Path $regKey -Name 'VaultPath' -Value $moved -Type String
   $p=Start-Fm $archive
-  $unlock=Expect-Dialog ([uint32]$p.Id) $T.Master 'review4 asks to unlock the review3 vault' 15
+  $unlock=Expect-Dialog ([uint32]$p.Id) $T.Master 'candidate asks to unlock the baseline vault' 15
   if($unlock -ne [IntPtr]::Zero){
     [VaultUiTest]::SetEditText((Wait-Child $unlock 123),$masterPw)
     [VaultUiTest]::ClickButton((Wait-Child $unlock 1))
   }
-  $dlg=Expect-Dialog ([uint32]$p.Id) $T.Password 'review4 opens the review3 vault' 15
+  $dlg=Expect-Dialog ([uint32]$p.Id) $T.Password 'candidate opens the baseline vault' 15
   [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg,3809))
-  $new=Expect-Dialog ([uint32]$p.Id) $T.NewPassword 'review4 opens new-password dialog after upgrade'
+  $new=Expect-Dialog ([uint32]$p.Id) $T.NewPassword 'candidate opens new-password dialog after upgrade'
   [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($new,121),'upgrade-only')
   [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($new,122),'UpgradeOnly#1')
   Start-Sleep -Milliseconds 300
@@ -2108,45 +2127,45 @@ if($baselineFm){
     [VaultUiTest]::SetEditText((Wait-Child $saveMaster 123),$masterPw)
     [VaultUiTest]::ClickButton((Wait-Child $saveMaster 1))
   }
-  Check 'review4 saved an upgraded ciphertext' ((Wait-File "$moved.bak" 10) -and ((Get-FileHash -LiteralPath $moved).Hash -ne $beforeHash))
-  Check 'review4 backup is exactly the encrypted pre-upgrade vault' ((Get-FileHash -LiteralPath "$moved.bak").Hash -eq $beforeHash)
-  Check 'review4 upgraded vault contains no plaintext' (-not(Test-BytesContain ([IO.File]::ReadAllBytes($moved)) ([Text.Encoding]::UTF8.GetBytes('UpgradeOnly#1'))))
+  Check 'candidate saved an upgraded ciphertext' ((Wait-File "$moved.bak" 10) -and ((Get-FileHash -LiteralPath $moved).Hash -ne $beforeHash))
+  Check 'candidate backup is exactly the encrypted pre-upgrade vault' ((Get-FileHash -LiteralPath "$moved.bak").Hash -eq $beforeHash)
+  Check 'candidate upgraded vault contains no plaintext' (-not(Test-BytesContain ([IO.File]::ReadAllBytes($moved)) ([Text.Encoding]::UTF8.GetBytes('UpgradeOnly#1'))))
   Stop-Fm $p
   $upgradedHash=(Get-FileHash -LiteralPath $moved).Hash
   $p=Start-Fm $archive
-  $unlock=Expect-Dialog ([uint32]$p.Id) $T.Master 'review4 reopens the upgraded vault' 15
+  $unlock=Expect-Dialog ([uint32]$p.Id) $T.Master 'candidate reopens the upgraded vault' 15
   if($unlock -ne [IntPtr]::Zero){[VaultUiTest]::SetEditText((Wait-Child $unlock 123),$masterPw);[VaultUiTest]::ClickButton((Wait-Child $unlock 1))}
-  $dlg=Expect-Dialog ([uint32]$p.Id) $T.Password 'review4 opens upgraded vault after restart' 15
-  $lst=Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg,3808)) $T.List 'review4 lists upgraded entries'
+  $dlg=Expect-Dialog ([uint32]$p.Id) $T.Password 'candidate opens upgraded vault after restart' 15
+  $lst=Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg,3808)) $T.List 'candidate lists upgraded entries'
   $lv=Wait-Child $lst 124
-  Check 'review4 retained the old entry' ((Find-Row $lv 'portable') -ge 0)
+  Check 'candidate retained the old entry' ((Find-Row $lv 'portable') -ge 0)
   $newRow=Find-Row $lv 'upgrade-only'
-  Check 'review4 retained the new entry' ($newRow -ge 0)
+  Check 'candidate retained the new entry' ($newRow -ge 0)
   if($newRow -ge 0){
     [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst,3829))
-    Check 'review4 retained the new password' ((Wait-ListText $lv $newRow 1 'UpgradeOnly#1') -eq 'UpgradeOnly#1')
+    Check 'candidate retained the new password' ((Wait-ListText $lv $newRow 1 'UpgradeOnly#1') -eq 'UpgradeOnly#1')
   }
   Stop-Fm $p
   Copy-Item -LiteralPath $preUpgrade -Destination $rollbackVault -Force
   Check 'rollback uses a separate encrypted copy' ((Get-FileHash -LiteralPath $rollbackVault).Hash -eq $beforeHash)
   Set-ItemProperty -Path $regKey -Name 'VaultPath' -Value $rollbackVault -Type String
   $p=Start-Process -FilePath $baselineFm -ArgumentList "`"$archive`"" -PassThru
-  $unlock=Expect-Dialog ([uint32]$p.Id) $T.Master 'review3 asks to unlock the rollback copy' 15
+  $unlock=Expect-Dialog ([uint32]$p.Id) $T.Master 'baseline asks to unlock the rollback copy' 15
   if($unlock -ne [IntPtr]::Zero){[VaultUiTest]::SetEditText((Wait-Child $unlock 123),$masterPw);[VaultUiTest]::ClickButton((Wait-Child $unlock 1))}
-  $dlg=Expect-Dialog ([uint32]$p.Id) $T.Password 'review3 opens the encrypted rollback copy' 15
-  $lst=Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg,3808)) $T.List 'review3 lists the rollback copy'
+  $dlg=Expect-Dialog ([uint32]$p.Id) $T.Password 'baseline opens the encrypted rollback copy' 15
+  $lst=Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg,3808)) $T.List 'baseline lists the rollback copy'
   $lv=Wait-Child $lst 124
   $oldRow=Find-Row $lv 'portable'
-  Check 'review3 rollback retained the old entry' ($oldRow -ge 0)
+  Check 'baseline rollback retained the old entry' ($oldRow -ge 0)
   if($oldRow -ge 0){
     [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst,3829))
-    Check 'review3 rollback retained the old password' ((Wait-ListText $lv $oldRow 1 $portPw) -eq $portPw)
+    Check 'baseline rollback retained the old password' ((Wait-ListText $lv $oldRow 1 $portPw) -eq $portPw)
   }
-  Check 'review3 rollback excludes the later entry' ((Find-Row $lv 'upgrade-only') -lt 0)
+  Check 'baseline rollback excludes the later entry' ((Find-Row $lv 'upgrade-only') -lt 0)
   Check 'rollback did not overwrite the upgraded vault' ((Get-FileHash -LiteralPath $moved).Hash -eq $upgradedHash)
   Stop-Fm $p
   Ensure-UiRunDirectory
-  $upgradeResult=[ordered]@{result=if($script:fail -eq $upgradeFailStart){'passed'}else{'failed'};checkedUtc=[DateTime]::UtcNow.ToString('o');account=[Security.Principal.WindowsIdentity]::GetCurrent().Name;windowsBuild=[Environment]::OSVersion.Version.ToString();baselineFileManagerSha256=(Get-FileHash -LiteralPath $baselineFm).Hash;fileManagerSha256=(Get-FileHash -LiteralPath $fmExe).Hash;guiSha256=(Get-FileHash -LiteralPath $guiExe).Hash;preUpgradeVaultSha256=$beforeHash;upgradedVaultSha256=$upgradedHash;backupSha256=(Get-FileHash -LiteralPath "$moved.bak").Hash;rollbackVaultSha256=(Get-FileHash -LiteralPath $rollbackVault).Hash;assertionsPassed=$script:pass;assertionsFailed=$script:fail-$upgradeFailStart;note='review3 EXE ran with test-only MinGW DLLs; rollback used a separate encrypted pre-upgrade copy and did not overwrite the upgraded vault'}
+  $upgradeResult=[ordered]@{result=if($script:fail -eq $upgradeFailStart){'passed'}else{'failed'};checkedUtc=[DateTime]::UtcNow.ToString('o');account=[Security.Principal.WindowsIdentity]::GetCurrent().Name;windowsBuild=[Environment]::OSVersion.Version.ToString();baselineFileManagerSha256=(Get-FileHash -LiteralPath $baselineFm).Hash;fileManagerSha256=(Get-FileHash -LiteralPath $fmExe).Hash;guiSha256=(Get-FileHash -LiteralPath $guiExe).Hash;preUpgradeVaultSha256=$beforeHash;upgradedVaultSha256=$upgradedHash;backupSha256=(Get-FileHash -LiteralPath "$moved.bak").Hash;rollbackVaultSha256=(Get-FileHash -LiteralPath $rollbackVault).Hash;assertionsPassed=$script:pass;assertionsFailed=$script:fail-$upgradeFailStart;note='Baseline EXE came from the explicit BaselineDir; rollback used a separate encrypted pre-upgrade copy and did not overwrite the upgraded vault'}
   $upgradeResult|ConvertTo-Json -Depth 4|Set-Content -LiteralPath (Join-Path $script:uiRunDirectory 'upgrade-rollback-result.json') -Encoding UTF8
 }
 Set-ItemProperty -Path $regKey -Name "UseMasterPassword"      -Value 0 -Type DWord
@@ -2159,26 +2178,7 @@ Write-Host "`n== 21. the vault location may be a folder ==" -ForegroundColor Cya
 
 # OK applies the page AND closes the options dialog, and moving the vault raises a
 # question about the file that was left behind, so both are handled here.
-function Open-PasswordPage([uint32]$procId, [string]$name) {
-  # Start-Process returns before 7zFM has created its main window. Posting WM_COMMAND
-  # to a zero handle silently loses the request, which made this late portable check
-  # fail intermittently even though the same page passed earlier in the run.
-  $deadline = (Get-Date).AddSeconds(12)
-  $fm = [IntPtr]::Zero
-  while ($fm -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline) {
-    $fm = [VaultUiTest]::FindDialogClass($procId, "7-Zip::FM")
-    if ($fm -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
-  }
-  if ($fm -eq [IntPtr]::Zero) { throw "7zFM main window did not appear for $name (PID $procId)" }
-  [void][VaultUiTest]::PostMessageW($fm, 0x0111, [IntPtr]900, [IntPtr]::Zero)
-  $opt = Expect-Dialog $procId $T.Options $name 12
-  $tab = [VaultUiTest]::FindDescendant($opt, 12320)
-  $titles = @()
-  for ($i = 0; $i -lt [VaultUiTest]::GetTabCount($tab); $i++) { $titles += [VaultUiTest]::GetTabText($tab, $i) }
-  $idx = [array]::IndexOf($titles, $T.Page)
-  if ($idx -ge 0) { [VaultUiTest]::MoveCursorHome(); [void][VaultUiTest]::ClickTab($tab, $idx); Start-Sleep -Seconds 2 }
-  return @{ Opt = $opt; Edit = (Wait-Child $opt 101 5) }
-}
+
 # Types a path the way a user does (typing raises EN_CHANGE, WM_SETTEXT does not) and
 # presses OK: returns "asked" when the "old file" question came up, otherwise "clean".
 function Apply-VaultPath([uint32]$procId, [hashtable]$page, [string]$newPath, [string]$name) {
@@ -2852,6 +2852,95 @@ if ((Test-Path -LiteralPath $deskShortcut) -or (Test-Path -LiteralPath $startSho
   Check "portable run left the uninstall entry unchanged" ((Get-UninstallState $uninstallKey) -eq $uninstallBefore)
 }
 
+Write-Host "`n== 28. restore previous encrypted version ==" -ForegroundColor Cyan
+$recoveryVault = Join-Path $workDir ('restore-ui-' + [guid]::NewGuid().ToString('N') + '.dat')
+Set-ItemProperty -Path $regKey -Name 'VaultPath' -Value $recoveryVault -Type String
+Set-ItemProperty -Path $regKey -Name 'UseMasterPassword' -Value 0 -Type DWord
+$p = Start-Fm $archive
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password 'restore fixture password dialog'
+[void](New-VaultEntry ([uint32]$p.Id) $dlg 'restore-first' 'ArchivePw' 'create first restore generation')
+[void](New-VaultEntry ([uint32]$p.Id) $dlg 'restore-second' 'SecondPw' 'create second restore generation')
+Stop-Fm $p
+Check 'restore fixture has a previous encrypted generation' (Test-Path -LiteralPath "$recoveryVault.bak")
+if (-not (Test-Path -LiteralPath "$recoveryVault.bak")) { throw 'Restore fixture backup missing.' }
+$restoreBefore = (Get-FileHash -LiteralPath $recoveryVault).Hash
+$restoreBackup = (Get-FileHash -LiteralPath "$recoveryVault.bak").Hash
+$p = Start-Fm ''
+$page = Open-PasswordPage ([uint32]$p.Id) 'restore settings page opens'
+$restoreButton = [VaultUiTest]::FindDescendant($page.Opt,2617)
+Check 'settings page offers restore previous version' ($restoreButton -ne [IntPtr]::Zero)
+if ($restoreButton -eq [IntPtr]::Zero) { throw 'Restore button missing from candidate.' }
+[VaultUiTest]::ClickButton($restoreButton)
+$confirm = Expect-Dialog ([uint32]$p.Id) $T.Caption 'restore asks for confirmation after authentication'
+$defaultId = [VaultUiTest]::Send($confirm,0x400,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -band 0xffff
+Check 'restore confirmation defaults to Cancel' ($defaultId -eq 2)
+$restoreText = [VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($confirm,65535))
+Check 'restore confirmation identifies the exact backup' ($restoreText.Contains("$recoveryVault.bak"))
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($confirm,2))
+Start-Sleep -Milliseconds 500
+Check 'cancel leaves primary and backup unchanged' (((Get-FileHash $recoveryVault).Hash -eq $restoreBefore) -and ((Get-FileHash "$recoveryVault.bak").Hash -eq $restoreBackup))
+
+# Pending edits must not be committed as an incidental effect of recovery.
+Set-VaultPathText $page.Edit ($recoveryVault + '.pending')
+[VaultUiTest]::ClickButton($restoreButton)
+$notice = Expect-Dialog ([uint32]$p.Id) $T.Caption 'pending settings prevent restoration'
+[void](Close-Box ([uint32]$p.Id) $notice $T.Caption)
+Check 'restore leaves configured path unchanged with pending edits' ((Get-ItemProperty $regKey).VaultPath -eq $recoveryVault)
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($page.Opt,2))
+$page = Open-PasswordPage ([uint32]$p.Id) 'restore page reopens without pending edits'
+$restoreButton = [VaultUiTest]::FindDescendant($page.Opt,2617)
+
+$leaseProcess = Start-Fm $archive
+[void](Expect-Dialog ([uint32]$leaseProcess.Id) $T.Password 'another password window holds this vault')
+try {
+  [VaultUiTest]::ClickButton($restoreButton)
+  $confirm = Expect-Dialog ([uint32]$p.Id) $T.Caption 'restore confirmation with competing window'
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($confirm,1))
+  Start-Sleep -Milliseconds 600
+  $notice = Expect-Dialog ([uint32]$p.Id) $T.Caption 'busy vault is reported'
+  Check 'busy restore preserves both generations' (((Get-FileHash $recoveryVault).Hash -eq $restoreBefore) -and ((Get-FileHash "$recoveryVault.bak").Hash -eq $restoreBackup))
+  [void](Close-Box ([uint32]$p.Id) $notice $T.Caption)
+} finally { Stop-Fm $leaseProcess }
+
+[VaultUiTest]::ClickButton($restoreButton)
+$confirm = Expect-Dialog ([uint32]$p.Id) $T.Caption 'restore confirmation after closing competing window'
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($confirm,1))
+Start-Sleep -Milliseconds 700
+$notice = Expect-Dialog ([uint32]$p.Id) $T.Caption 'restore reports completion'
+Check 'restored primary is exactly the previous ciphertext' ((Get-FileHash $recoveryVault).Hash -eq $restoreBackup)
+Check 'restore source backup is unchanged' ((Get-FileHash "$recoveryVault.bak").Hash -eq $restoreBackup)
+$safety = @(Get-ChildItem -LiteralPath $workDir -Filter ((Split-Path $recoveryVault -Leaf) + '.pre-restore-*'))
+Check 'restore preserved exactly one encrypted safety copy' ($safety.Count -eq 1)
+if ($safety.Count -eq 1) { Check 'safety copy matches the pre-restore ciphertext' ((Get-FileHash $safety[0].FullName).Hash -eq $restoreBefore) }
+[void](Close-Box ([uint32]$p.Id) $notice $T.Caption)
+Check 'restored mode is reflected in settings' ((Get-ItemProperty $regKey).UseMasterPassword -eq 0)
+Stop-Fm $p
+$p = Start-Fm $archive
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password 'restored vault opens after restart'
+$lst = Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg,3808)) $T.List 'restored entries can be listed'
+$lv = Wait-Child $lst 124
+Check 'only the earlier entry remains after restore' ((Find-Row $lv 'restore-first') -ge 0 -and (Find-Row $lv 'restore-second') -lt 0)
+Select-Row $lv 0
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst,3831))
+Stop-Fm $p
+$restoreExtract = Join-Path $workDir ('restore-extract-' + [guid]::NewGuid().ToString('N'))
+$g = Start-Process -FilePath $guiExe -ArgumentList @('x','-y',"-o`"$restoreExtract`"","`"$archive`"") -PassThru
+$gdlg = Expect-Dialog ([uint32]$g.Id) $T.Password '7zG asks for the restored archive password' 15
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($gdlg,3808))
+$lst = Expect-Dialog ([uint32]$g.Id) $T.List '7zG lists the restored generation'
+$lv = Wait-Child $lst 124
+Check '7zG sees the restored entry' ((Find-Row $lv 'restore-first') -ge 0)
+Select-Row $lv 0
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst,3831))
+[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($gdlg,1))
+$deadline = (Get-Date).AddSeconds(20)
+while (-not $g.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+$restoredContent = Join-Path $restoreExtract 'hello.txt'
+Check 'restored vault password really extracts the archive' (Test-Path -LiteralPath $restoredContent)
+if (Test-Path -LiteralPath $restoredContent) {
+  Check 'restored-password extraction content matches' ((Get-Content -LiteralPath $restoredContent -Raw).Trim() -eq 'secret content')
+}
+Check '7zG completes restored-password extraction' $g.HasExited
 if (-not $g.HasExited) { Stop-Process -Id $g.Id -Force }
 } catch {
   $script:uiAbortMessage = $_.Exception.Message
@@ -2887,6 +2976,9 @@ if ($KeepArtifacts -or $script:fail -ne 0) {
       startedUtc = $script:uiStartedUtc
       finishedUtc = [DateTime]::UtcNow.ToString('o')
       scriptSha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
+      account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+      windowsBuild = [Environment]::OSVersion.Version.ToString()
+      elevated = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
       runtimeDirectory = $SevenZipDir
       fileManagerSha256 = (Get-FileHash -LiteralPath $fmExe -Algorithm SHA256).Hash
       guiSha256 = (Get-FileHash -LiteralPath $guiExe -Algorithm SHA256).Hash

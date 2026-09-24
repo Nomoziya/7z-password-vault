@@ -11,10 +11,10 @@ $started=[DateTime]::UtcNow.ToString('o')
 $record=[ordered]@{startedUtc=$started;runDirectory=$run;scriptSha256=(Get-FileHash $PSCommandPath).Hash;buildExitCode=$null;aclExitCode=$null;aclClassification='NOT_RUN';diskFailureExitCode=$null;diskFailureClassification='NOT_RUN';realDiskExitCode=$null;realDiskClassification='NOT_RUN';suiteExitCode=$null;exitCode=$null;classification='BUILD_FAILURE'}
 Push-Location $root
 try{
-  $sources=@('tests/vault-native-test.cpp','CPP/Common/MyString.cpp','CPP/Common/MyVector.cpp','CPP/Common/StringConvert.cpp','CPP/Common/IntToString.cpp','CPP/Windows/FileIO.cpp','CPP/Windows/FileName.cpp','CPP/Windows/FileDir.cpp','CPP/Windows/FileFind.cpp','CPP/Windows/TimeUtils.cpp','CPP/Windows/ErrorMsg.cpp','CPP/Windows/Window.cpp')
+  $sources=@('tests/vault-native-test.cpp','CPP/Common/Lang.cpp','CPP/Common/StringToInt.cpp','CPP/Common/UTFConvert.cpp','CPP/Common/MyString.cpp','CPP/Common/MyVector.cpp','CPP/Common/StringConvert.cpp','CPP/Common/IntToString.cpp','CPP/Windows/FileIO.cpp','CPP/Windows/FileName.cpp','CPP/Windows/FileDir.cpp','CPP/Windows/FileFind.cpp','CPP/Windows/TimeUtils.cpp','CPP/Windows/ErrorMsg.cpp','CPP/Windows/Window.cpp')
   $compiler=(Get-Command g++ -ErrorAction Stop).Source
   $record.compiler=$compiler;$record.compilerSha256=(Get-FileHash $compiler).Hash
-  $inputPaths=@(& git ls-files --cached --others --exclude-standard -- C CPP tests/vault-native-test.cpp tests/password-vault-security-test.ps1 | Sort-Object -Unique)
+  $inputPaths=@(& git ls-files --cached --others --exclude-standard -- C CPP Lang tests/vault-native-test.cpp tests/password-vault-security-test.ps1 tests/real-disk-failure-test.ps1 | Sort-Object -Unique)
   $inputHashes=@(foreach($path in $inputPaths){if(Test-Path -LiteralPath $path -PathType Leaf){[ordered]@{path=$path;sha256=(Get-FileHash -LiteralPath $path).Hash}}})
   $inputHashes | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $run 'inputs.json')
   $record.inputsSha256=(Get-FileHash (Join-Path $run 'inputs.json')).Hash

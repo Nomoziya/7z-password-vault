@@ -45,6 +45,7 @@ static const UInt32 kLangIDs[] =
   IDB_PASSWORD_VAULT_BROWSE,
   IDB_PASSWORD_EXPORT,
   IDB_PASSWORD_IMPORT,
+  IDB_PASSWORD_RESTORE,
   IDX_PASSWORD_HIDE_LIST,
   IDX_PASSWORD_UNNAMED_PW
 };
@@ -327,7 +328,7 @@ void CPasswordPage::OnImport()
   UString error;
   CPasswordVault src;
   src.SetPath(bi.FilePath);
-  if (!src.Load(*this, error))
+  if (!src.Load(*this, error, true))
   {
     ErrorBox(*this, error);
     return;
@@ -386,6 +387,84 @@ void CPasswordPage::OnImport()
   cacheGuard.Commit();
 }
 
+void CPasswordPage::OnRestore()
+{
+  CPageMasterCacheGuard cacheGuard; // Clear old/backup credentials on every exit.
+  if (_needSave)
+  {
+    InfoBox(*this, PasswordVault_GetText(IDT_PASSWORD_RESTORE_PENDING,
+        L"请先应用或取消当前设置修改，再恢复上一版本。"));
+    return;
+  }
+  const UString path = CPasswordVault::GetConfiguredPath();
+  CPasswordVaultRestore restore;
+  UString error;
+  if (!restore.Prepare(path, *this, error))
+  {
+    ErrorBox(*this, error);
+    return;
+  }
+  if (restore.AlreadyCurrent())
+  {
+    InfoBox(*this, PasswordVault_GetText(IDT_PASSWORD_RESTORE_SAME,
+        L"当前密码库已经与上一版本相同，没有修改文件。"));
+    return;
+  }
+  UString question = PasswordVault_GetText(IDT_PASSWORD_RESTORE_QUESTION,
+      L"恢复上一版本？\n\n当前库：{0}\n备份：{1}\n条目数：{2}\n加密方式：{3}\n备份文件修改时间（UTC）：{4}\n\n"
+      L"最近的修改将撤回，已删除的条目可能重新出现。恢复前会保留当前文件的加密副本。"
+      L"备份可能使用旧主密码。请先关闭其他密码窗口及旧版程序。");
+  question.Replace(UString(L"{0}"), path);
+  question.Replace(UString(L"{1}"), path + L".bak");
+  UString number; number.Add_UInt32(restore.EntryCount());
+  question.Replace(UString(L"{2}"), number);
+  question.Replace(UString(L"{3}"), UString(restore.MasterMode() ? L"AES-256-GCM" : L"Windows DPAPI"));
+  SYSTEMTIME time;
+  UString stamp;
+  if (::FileTimeToSystemTime(&restore.BackupTime, &time))
+  {
+    wchar_t formatted[32];
+    ::wsprintfW(formatted, L"%04u-%02u-%02u %02u:%02u:%02u", time.wYear, time.wMonth,
+        time.wDay, time.wHour, time.wMinute, time.wSecond);
+    stamp = formatted;
+  }
+  question.Replace(UString(L"{4}"), stamp);
+  if (::MessageBoxW(*this, question, PasswordVault_GetCaption(),
+      MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON2) != IDOK) return;
+  // Another process can change settings while the confirmation is open.
+  if (CPasswordVault::GetConfiguredPath() != path)
+  {
+    ErrorBox(*this, PasswordVault_GetText(IDT_PASSWORD_RESTORE_PENDING,
+        L"请先应用或取消当前设置修改，再恢复上一版本。"));
+    return;
+  }
+  if (!restore.Commit(error))
+  {
+    if (restore.Stage == L"vault-in-use-close-password-windows")
+      error = PasswordVault_GetText(IDT_PASSWORD_RESTORE_BUSY,
+          L"此密码库仍被其他窗口使用。请关闭使用此库的密码窗口后重试；文件没有改变。");
+    ErrorBox(*this, error);
+    return;
+  }
+  // File metadata is authoritative. Update only the mode, never stale unrelated options.
+  _oldUseMaster = restore.MasterMode();
+  CheckButton(IDX_PASSWORD_USE_MASTER, _oldUseMaster);
+  const LONG settingsError = NPasswordVault::CInfo::SaveRestoredMode(_oldUseMaster);
+  UString message = PasswordVault_GetText(IDT_PASSWORD_RESTORE_DONE,
+      L"已恢复上一版本。备份文件未改变。\n\n恢复前的加密副本：\n{0}");
+  const UString copy = restore.SafetyCopyPath.IsEmpty() ?
+      PasswordVault_GetText(IDT_PASSWORD_RESTORE_NO_COPY, L"原密码库不存在，因此没有生成恢复前副本。") : restore.SafetyCopyPath;
+  message.Replace(UString(L"{0}"), copy);
+  if (settingsError != ERROR_SUCCESS)
+  {
+    message += L"\n\n";
+    message += PasswordVault_GetText(IDT_PASSWORD_RESTORE_SETTINGS,
+        L"文件已恢复，但设置刷新失败。重新打开设置页后请核对加密模式。");
+    message += L" (Win32="; message.Add_UInt32((UInt32)settingsError); message += L")";
+  }
+  InfoBox(*this, message);
+}
+
 bool CPasswordPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
 {
   switch (buttonID)
@@ -404,6 +483,9 @@ bool CPasswordPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
       return true;
     case IDB_PASSWORD_IMPORT:
       OnImport();
+      return true;
+    case IDB_PASSWORD_RESTORE:
+      OnRestore();
       return true;
     case IDX_PASSWORD_USE_MASTER:
     case IDX_PASSWORD_REMEMBER:

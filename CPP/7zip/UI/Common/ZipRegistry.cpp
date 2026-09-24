@@ -636,6 +636,15 @@ void CInfo::SaveVaultPath(const FString &path)
   key.SetValue(kVaultPath, fs2us(path));
 }
 
+LONG CInfo::SaveRestoredMode(bool useMaster)
+{
+  CS_LOCK
+  CKey key;
+  const LONG result = CreateMainKey(key, kKeyName);
+  if (result != ERROR_SUCCESS) return result;
+  return key.SetValue(kUseMasterPassword, useMaster);
+}
+
 void CInfo::Load()
 {
   VaultPath.Empty();
