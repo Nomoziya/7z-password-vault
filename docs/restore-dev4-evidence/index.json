@@ -1,0 +1,48 @@
+{
+  "sourceCommit": "77addbfbdd430db3ff29db76ae8f506039eb450b",
+  "candidate": "7z-password-vault-1.6.0-restore-dev4-win64-internal-test.zip",
+  "candidateSha256": "4b95dcb15d27a0db61f7cd3372855133f46ff43da8457180777e18ff39b0506b",
+  "note": "Raw evidence copied unchanged. Local GUI is Nomozi, not independent standard-account acceptance. Final dev4 cross-account and administrator VHD checks deferred until the user returns.",
+  "records": [
+    {
+      "file": "clean-build-result.json",
+      "sha256": "6B71ED33F1B2905F451AEDF882D57B4F2F40D970A7CF85817F77B52170994779",
+      "original": "tests/b/clean-build-6e03ecca714a4b32b76b5b61451ff4b8/result.json"
+    },
+    {
+      "file": "gui-en-result.json",
+      "sha256": "D733D38B569E134DB3D1420C3C2B1629354CAEAE2ADB5FCA3E172B486A3BC0F9",
+      "original": "tests/b/ui-run-6c01208c469a480cacb25a20205da073/result.json"
+    },
+    {
+      "file": "gui-full-result.json",
+      "sha256": "DAC3E95A4CD88496170A0B02569298444D5E4F6B7C878332C65FA7628BD0C8B7",
+      "original": "tests/b/ui-run-b36bf90f36024868a2f418d3f41468b2/result.json"
+    },
+    {
+      "file": "gui-zh-cn-result.json",
+      "sha256": "4FFA86237B3F523AE33186DE1C64FDAFE86EC8B7905F9F0F842AEFC91657B744",
+      "original": "tests/b/ui-run-7c7a13328fe844f3ac64597c16da4841/result.json"
+    },
+    {
+      "file": "gui-zh-tw-result.json",
+      "sha256": "B112B3A028A4C1811F5AAC13507F9D528FC25FDA597508E9B2C5384E82A875C7",
+      "original": "tests/b/ui-run-2f183cde698e4d58babf2aeff95b2e25/result.json"
+    },
+    {
+      "file": "native-result.json",
+      "sha256": "58CF1142F84ED4CD06C2808F37FE455F97B0151F0621ADEE0948AD7EA71E05BB",
+      "original": "tests\\b\\native-run-5e274fe6b25f4a79aef959ee2e69f144\\result.json"
+    },
+    {
+      "file": "native-result.log",
+      "sha256": "56852F2EC3CDA983A3FE8D7853CB273D8F433D4F5EB0E0F36898B8F2621C97B7",
+      "original": "tests\\b\\native-run-5e274fe6b25f4a79aef959ee2e69f144\\result.log"
+    },
+    {
+      "file": "upgrade-rollback-result.json",
+      "sha256": "A4FE17F9AD83F80E612F984A2DAE4779C2015FB4071EA31A345AAD2A970EF7F9",
+      "original": "tests/b/ui-run-b36bf90f36024868a2f418d3f41468b2/upgrade-rollback-result.json"
+    }
+  ]
+}

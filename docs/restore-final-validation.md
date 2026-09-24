@@ -1,6 +1,6 @@
 # 恢复功能收尾候选 dev4
 
-2026-09-24。范围仅 Windows 11 Insider x64。dev3 原始记录保留在 `restore-validation.md`；本页记录新增收尾实现，不以旧程序的验收冒充新程序结果。
+2026-09-25 更新。范围仅 Windows 11 Insider x64。dev3 原始记录保留在 `restore-validation.md`；本页记录新增收尾实现，不以旧程序的验收冒充新程序结果。
 
 ## 已实现
 
@@ -32,8 +32,13 @@ dev4 为未签名内测包，生成时源码尚未提交，保留真实 `sourceD
 | 核心压缩 | 39/39 | `tests/restore-final-core.log` |
 | 运行时输入 | 10/10 | `tests/restore-final-runtime.log` |
 | 发布门禁 | 34/34，包含专项冒充完整验收的拒绝测试 | `tests/restore-final-release-gate.log` |
+| 完整 GUI 与 v1.5.0 升级回滚 | 436/0，WW\Nomozi 普通桌面；不是独立标准账户结果 | `tests/b/ui-run-b36bf90f36024868a2f418d3f41468b2/result.json` 及同目录升级回滚 JSON |
+| 干净提交重建 | PASS；提交 `77addbfbdd430db3ff29db76ae8f506039eb450b` 导出到全新目录构建，两个 EXE 与 dev4 哈希相同 | `tests/b/clean-build-6e03ecca714a4b32b76b5b61451ff4b8/result.json` |
+| 包验收及附属记录 | PASS；ZIP、sidecar、包内清单、构建/来源摘要与 15 个 SBOM 文件一致，两个 EXE 确认为 NotSigned，扫描 not-reviewed | dev4 ZIP 及其 `.build.json`、`.source.sha256`、`.sbom.json` |
 
 三种语言均在实际窗口 DPI 144（150%）验证文字边界、键盘取消和恢复流程。未修改系统显示设置；100%/125% 未运行，不能把本结果泛化到所有缩放。
+
+关键原始 JSON 和原生执行日志已原样归档到 `docs/restore-dev4-evidence/`，哈希与原路径见 `index.json`。归档时核对了原生测试记录中的全部 1380 个输入文件，均与当前文件一致；也核对了当前 GUI 脚本、冻结 EXE 和独立重建 EXE。不因为技能更新或阶段续行重复执行已通过测试。
 
 ## 测试夹具修正与历史失败
 
@@ -45,8 +50,9 @@ dev4 为未签名内测包，生成时源码尚未提交，保留真实 `sourceD
 
 ## 待收齐
 
-- dev4 完整 GUI 与升级回滚回归、干净提交重建及包验收记录。
 - 独立标准账户对 dev4 的完整验收，以及真实跨账户 DPAPI 拒绝。`tests/restore-standard-user-run.ps1` 已固定 dev4 ZIP，并会调用 `restore-cross-account-test.ps1`，将原始结果复制到公共目录。
 - dev4 原生测试程序的真实磁盘满记录。dev3 已通过的记录继续保留，但不标作 dev4 实测。
+
+用户于 2026-09-25 明确将需要人工操作的任务延后至返回后；上述两项不在离开期间启动。命令和接收结果要求见 `restore-return-checklist.md`。不切换账户、不弹出提权操作，也不上传 Defender 样本。
 
 收齐前保持内测候选，不替代 v1.5.0 正式发布。原计划的启动残留提示、清理失败报告及注册表失败 GUI 检查现已实现；当前缺口主要是最终程序的跨会话验收证据。

@@ -1,0 +1,20 @@
+{
+  "scope": "restore-focused",
+  "uiLanguage": "en",
+  "restoreWindowDpi": 144,
+  "classification": "PASS",
+  "exitCode": 0,
+  "passed": 45,
+  "failed": 0,
+  "failedChecks": [],
+  "abortMessage": null,
+  "startedUtc": "2026-09-24T15:03:48.2095990Z",
+  "finishedUtc": "2026-09-24T15:04:10.3070748Z",
+  "scriptSha256": "205D29508D6E71539C93CB1279F38E01BEFAC54BB072F9F5BBA696D786521882",
+  "account": "WW\\Nomozi",
+  "windowsBuild": "10.0.26220.0",
+  "elevated": false,
+  "runtimeDirectory": "D:\\DSH Work\\7z-passward\\dist\\restore-candidate4-20260924",
+  "fileManagerSha256": "2908567C6B7088450216FE708848A20E501EA87F6B7483D7E518A21BF0F05CA2",
+  "guiSha256": "839BB203FBAF37E1DB5D6A2EC4CEE8433AFA85826FAA315E82C0D5E9D5B8F62B"
+}
