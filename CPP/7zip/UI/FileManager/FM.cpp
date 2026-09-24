@@ -41,6 +41,7 @@
 #include "RegistryUtils.h"
 #include "StringUtils.h"
 #include "ViewSettings.h"
+#include "PasswordVault.h"
 
 using namespace NWindows;
 using namespace NFile;
@@ -733,6 +734,8 @@ static int WINAPI WinMain2(int nCmdShow)
   #endif
 
   g_App.ReloadLangItems();
+
+  PasswordVault_NotifyRestoreMaterial(NULL, CPasswordVault::GetConfiguredPath());
 
   MSG msg;
   if (!InitInstance (nCmdShow))

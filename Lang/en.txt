@@ -492,6 +492,8 @@ The current vault did not exist, so no pre-restore copy was created.
 The current vault already matches the previous version. No files were changed.
 The file was restored, but settings could not be refreshed. Reopen settings and check the encryption mode.
 Another window is still using this vault. Close password windows using it and retry. No files were changed.
+Restore temporary material was found. It may be from an interrupted or active restore:\n{0}\n\nThe program did not use or remove it. Close other password windows, keep this file and the pre-restore copies beside it, then check the current vault. The filename does not prove that the contents are valid.
+A temporary encrypted file could not be removed. Keep it for inspection:\n{0}\nCleanup error: {1}\nThis warning does not change the restore result above.
 3900
 Elapsed time:
 Remaining time:

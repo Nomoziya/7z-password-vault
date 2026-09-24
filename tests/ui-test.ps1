@@ -26,12 +26,14 @@
 
 param(
   [string]$SevenZipDir = '',
-  [ValidateSet("auto", "zh-cn", "en")][string]$UiLang = "auto",
+  [ValidateSet("auto", "zh-cn", "zh-tw", "en")][string]$UiLang = "auto",
   # another 7zFM/7zG (the user's own copy) normally makes the run refuse to start,
   # because it shares the vault settings and can overwrite this run's vault file
   [switch]$AllowOtherInstances,
   [string]$BaselineDir = '',
-  [switch]$KeepArtifacts
+  [switch]$KeepArtifacts,
+  [switch]$RestoreOnly,
+  [int]$ExpectedDpi = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,6 +64,14 @@ $script:titles = @{
     Untitled = "未命名 1"; Compress = "添加到压缩包"
     ExportTitle = "导出密码库"; ImportTitle = "导入密码库"
     BtnList = "已保存的密码..."; BtnNew = "新建密码..."; Master = "主密码"
+  }
+  "zh-tw" = @{
+    Password = "輸入密碼"; NewPassword = "新建密碼"; EditPassword = "編輯密碼"
+    List = "已儲存的密碼"; Options = "選項"; Caption = "7-Zip 密碼管家"
+    Filled = "已填入："; Page = "密碼管理"; PageLabel = "密碼庫位置（留空使用預設）："
+    Untitled = "未命名 1"; Compress = "加入壓縮檔案"
+    ExportTitle = "匯出密碼庫"; ImportTitle = "匯入密碼庫"
+    BtnList = "已儲存的密碼..."; BtnNew = "新建密碼..."; Master = "主密碼"
   }
   "en" = @{
     Password = "Enter password"; NewPassword = "New password"; EditPassword = "Edit password"
@@ -180,9 +190,17 @@ function Get-VaultSettings {
   return $bag
 }
 function Set-VaultSettings($bag) {
-  Remove-Item -Path $regKey -Recurse -Force -ErrorAction SilentlyContinue
-  if ($null -eq $bag) { return }        # the key did not exist before the run
-  New-Item -Path $regKey -Force | Out-Null
+  if ($null -eq $bag) {
+    if (Test-Path -LiteralPath $regKey) { Remove-Item -LiteralPath $regKey -Recurse -Force }
+    return
+  }
+  if (-not (Test-Path -LiteralPath $regKey)) { New-Item -Path $regKey | Out-Null }
+  $current = Get-ItemProperty -LiteralPath $regKey
+  foreach ($prop in $current.PSObject.Properties) {
+    if ($prop.Name -notlike 'PS*' -and -not $bag.ContainsKey($prop.Name)) {
+      Remove-ItemProperty -LiteralPath $regKey -Name $prop.Name
+    }
+  }
   foreach ($name in $bag.Keys) {
     $value = $bag[$name]
     $type = if ($value -is [int] -or $value -is [long]) { "DWord" } else { "String" }
@@ -548,6 +566,30 @@ public class VaultUiTest {
     mouse_event(0x0004, 0, 0, 0, IntPtr.Zero);
     return "clicked " + pt.x + "," + pt.y;
   }
+  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, IntPtr extra);
+  public static void PressKey(IntPtr window, byte key) {
+    if (!EnsureForeground(window, 3000)) throw new Exception("Keyboard target is not foreground");
+    keybd_event(key, 0, 0, IntPtr.Zero); keybd_event(key, 0, 2, IntPtr.Zero);
+    System.Threading.Thread.Sleep(300);
+  }
+  [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
+  [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
+  [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+  [StructLayout(LayoutKind.Sequential)] struct SIZE { public int cx, cy; }
+  [DllImport("gdi32.dll", CharSet=CharSet.Unicode)] static extern bool GetTextExtentPoint32W(IntPtr dc, string text, int length, out SIZE size);
+  public static bool ButtonFits(IntPtr button) {
+    if (button == IntPtr.Zero) return false;
+    RECT r, p;
+    if (!GetWindowRect(button, out r) || !GetWindowRect(GetParent(button), out p)) return false;
+    string text=GetControlText(button); SIZE size;
+    IntPtr dc=GetDC(button), font=Send(button, 0x31, IntPtr.Zero, IntPtr.Zero);
+    IntPtr old=SelectObject(dc,font);
+    bool measured=GetTextExtentPoint32W(dc,text,text.Length,out size);
+    SelectObject(dc,old); ReleaseDC(button,dc);
+    return measured && r.left>=p.left && r.right<=p.right && r.top>=p.top && r.bottom<=p.bottom &&
+      size.cx+12<=r.right-r.left && size.cy<=r.bottom-r.top;
+  }
   public static void MoveCursorHome() { SetCursorPos(4, 4); }
 
   /* Clicks the centre of any control with the real mouse. Used for controls whose
@@ -908,6 +950,8 @@ function Wait-FileSize([string]$path, [int]$seconds = 5) {
 }
 
 $savedSettings = Get-VaultSettings
+Ensure-UiRunDirectory
+$savedSettings | Export-Clixml -LiteralPath (Join-Path $script:uiRunDirectory 'settings-before.clixml')
 # ---------------------------------------------------------------- isolation
 # The settings live in one registry key that the product writes and the real vault is a
 # file of the user. Both are snapshotted here: a registry hive export (subkeys and value
@@ -982,7 +1026,7 @@ Remove-Item $archive -Force -ErrorAction SilentlyContinue
 & $szExe a -p"ArchivePw" -mhe $archive $plain | Out-Null
 Check "test archive created" (Test-Path $archive)
 
-New-Item -Path $regKey -Force | Out-Null
+if (-not (Test-Path -LiteralPath $regKey)) { New-Item -Path $regKey | Out-Null }
 Set-ItemProperty -Path $regKey -Name "VaultPath"          -Value $vault -Type String
 Set-ItemProperty -Path $regKey -Name "UseMasterPassword"  -Value 0 -Type DWord
 Set-ItemProperty -Path $regKey -Name "AutoTypeByName"     -Value 1 -Type DWord
@@ -1088,6 +1132,7 @@ function Get-ListPassword([IntPtr]$lst, [int]$row) {
   return [VaultUiTest]::GetListText($lst, $row, 1)
 }
 # ---------------------------------------------------------------- test 1
+if (-not $RestoreOnly) {
 Write-Host "`n== 1. save a named password ==" -ForegroundColor Cyan
 $p = Start-Fm $archive
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears"
@@ -2852,6 +2897,7 @@ if ((Test-Path -LiteralPath $deskShortcut) -or (Test-Path -LiteralPath $startSho
   Check "portable run left the uninstall entry unchanged" ((Get-UninstallState $uninstallKey) -eq $uninstallBefore)
 }
 
+} # Full-suite cases; RestoreOnly is an explicit focused run.
 Write-Host "`n== 28. restore previous encrypted version ==" -ForegroundColor Cyan
 $recoveryVault = Join-Path $workDir ('restore-ui-' + [guid]::NewGuid().ToString('N') + '.dat')
 Set-ItemProperty -Path $regKey -Name 'VaultPath' -Value $recoveryVault -Type String
@@ -2869,6 +2915,9 @@ $p = Start-Fm ''
 $page = Open-PasswordPage ([uint32]$p.Id) 'restore settings page opens'
 $restoreButton = [VaultUiTest]::FindDescendant($page.Opt,2617)
 Check 'settings page offers restore previous version' ($restoreButton -ne [IntPtr]::Zero)
+$script:restoreDpi = [VaultUiTest]::GetDpiForWindow($page.Opt)
+Check 'restore button text fits inside the actual displayed control' ([VaultUiTest]::ButtonFits($restoreButton))
+if ($ExpectedDpi -gt 0) { Check 'restore window uses requested acceptance DPI' ($script:restoreDpi -eq $ExpectedDpi) }
 if ($restoreButton -eq [IntPtr]::Zero) { throw 'Restore button missing from candidate.' }
 [VaultUiTest]::ClickButton($restoreButton)
 $confirm = Expect-Dialog ([uint32]$p.Id) $T.Caption 'restore asks for confirmation after authentication'
@@ -2876,7 +2925,7 @@ $defaultId = [VaultUiTest]::Send($confirm,0x400,[IntPtr]::Zero,[IntPtr]::Zero).T
 Check 'restore confirmation defaults to Cancel' ($defaultId -eq 2)
 $restoreText = [VaultUiTest]::GetEditText([VaultUiTest]::FindDescendant($confirm,65535))
 Check 'restore confirmation identifies the exact backup' ($restoreText.Contains("$recoveryVault.bak"))
-[VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($confirm,2))
+[VaultUiTest]::PressKey($confirm,27)
 Start-Sleep -Milliseconds 500
 Check 'cancel leaves primary and backup unchanged' (((Get-FileHash $recoveryVault).Hash -eq $restoreBefore) -and ((Get-FileHash "$recoveryVault.bak").Hash -eq $restoreBackup))
 
@@ -2942,6 +2991,61 @@ if (Test-Path -LiteralPath $restoredContent) {
 }
 Check '7zG completes restored-password extraction' $g.HasExited
 if (-not $g.HasExited) { Stop-Process -Id $g.Id -Force }
+# Discover interruption material without using or removing it.
+$material = $recoveryVault + '.restore-tmp-ui-fixture'
+Copy-Item -LiteralPath "$recoveryVault.bak" -Destination $material
+$p = Start-Fm ''
+$notice = Expect-Dialog ([uint32]$p.Id) $T.Caption 'startup reports interrupted restore material'
+$materialText = [VaultUiTest]::GetControlText([VaultUiTest]::FindDescendant($notice,65535))
+Check 'startup notice identifies the exact material path' ($materialText.Contains($material))
+[void](Close-Box ([uint32]$p.Id) $notice $T.Caption)
+Check 'startup notice preserves current vault and temporary ciphertext' (((Get-FileHash $recoveryVault).Hash -eq $restoreBackup) -and (Test-Path -LiteralPath $material))
+Stop-Fm $p
+Remove-Item -LiteralPath $material
+
+# Real registry ACL denies only settings refresh, after file commit.
+Copy-Item -LiteralPath $safety[0].FullName -Destination $recoveryVault -Force
+$p = Start-Fm ''
+$page = Open-PasswordPage ([uint32]$p.Id) 'settings-error restore page opens'
+$restoreButton = [VaultUiTest]::FindDescendant($page.Opt,2617)
+$aclHandle = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\7-Zip\PasswordVault', [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree, ([Security.AccessControl.RegistryRights]::ChangePermissions -bor [Security.AccessControl.RegistryRights]::ReadPermissions))
+if ($null -eq $aclHandle) { throw 'Cannot open test registry ACL handle' }
+$originalAcl = [Microsoft.Win32.RegistryAclExtensions]::GetAccessControl($aclHandle)
+$originalSddl = $originalAcl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+$restrictedAcl = [Microsoft.Win32.RegistryAclExtensions]::GetAccessControl($aclHandle)
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$rule = [Security.AccessControl.RegistryAccessRule]::new($sid,[Security.AccessControl.RegistryRights]::SetValue,[Security.AccessControl.AccessControlType]::Deny)
+$restrictedAcl.AddAccessRule($rule)
+try {
+  [Microsoft.Win32.RegistryAclExtensions]::SetAccessControl($aclHandle,$restrictedAcl)
+  [VaultUiTest]::ClickButton($restoreButton)
+  $confirm = Expect-Dialog ([uint32]$p.Id) $T.Caption 'restore confirmation before settings denial'
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($confirm,1))
+  Start-Sleep -Milliseconds 600
+  $notice = Expect-Dialog ([uint32]$p.Id) $T.Caption 'post-commit settings failure is reported'
+  $message = [VaultUiTest]::GetControlText([VaultUiTest]::FindDescendant($notice,65535))
+  Check 'settings failure reports actual access denied after successful file restore' ($message.Contains('Win32=5'))
+  Check 'settings denial does not roll back or corrupt restored files' (((Get-FileHash $recoveryVault).Hash -eq $restoreBackup) -and ((Get-FileHash "$recoveryVault.bak").Hash -eq $restoreBackup))
+  [void](Close-Box ([uint32]$p.Id) $notice $T.Caption)
+} finally {
+  try {
+    $restoreAcl = [Security.AccessControl.RegistrySecurity]::new()
+    $restoreAcl.SetSecurityDescriptorSddlForm($originalSddl,[Security.AccessControl.AccessControlSections]::Access)
+    [Microsoft.Win32.RegistryAclExtensions]::SetAccessControl($aclHandle,$restoreAcl)
+    $actualSddl = [Microsoft.Win32.RegistryAclExtensions]::GetAccessControl($aclHandle).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+    # Windows may set the DACL_AUTO_INHERITED bookkeeping bit on SetSecurity.
+    # Compare all ACE bytes and the inheritance-protection flag, not that bit.
+    $beforeDescriptor = [Security.AccessControl.RawSecurityDescriptor]::new($originalSddl)
+    $afterDescriptor = [Security.AccessControl.RawSecurityDescriptor]::new($actualSddl)
+    $beforeBytes = [byte[]]::new($beforeDescriptor.DiscretionaryAcl.BinaryLength)
+    $afterBytes = [byte[]]::new($afterDescriptor.DiscretionaryAcl.BinaryLength)
+    $beforeDescriptor.DiscretionaryAcl.GetBinaryForm($beforeBytes,0)
+    $afterDescriptor.DiscretionaryAcl.GetBinaryForm($afterBytes,0)
+    $protected = [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected
+    Check 'registry fault fixture restores every original ACE and inheritance policy' (([Convert]::ToBase64String($beforeBytes) -eq [Convert]::ToBase64String($afterBytes)) -and (($beforeDescriptor.ControlFlags -band $protected) -eq ($afterDescriptor.ControlFlags -band $protected)))
+  } finally { $aclHandle.Dispose() }
+}
+Stop-Fm $p
 } catch {
   $script:uiAbortMessage = $_.Exception.Message
   if ($script:fail -eq 0) { Check 'GUI run aborted' $false $script:uiAbortMessage }
@@ -2967,6 +3071,9 @@ if ($KeepArtifacts -or $script:fail -ne 0) {
   try {
     Ensure-UiRunDirectory
     $uiResult = [ordered]@{
+      scope = if ($RestoreOnly) { 'restore-focused' } else { 'full' }
+      uiLanguage = $UiLang
+      restoreWindowDpi = $script:restoreDpi
       classification = if ($script:fail -eq 0) { 'PASS' } else { 'FAIL' }
       exitCode = if ($script:fail -eq 0) { 0 } else { 1 }
       passed = $script:pass

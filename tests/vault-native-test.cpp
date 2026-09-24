@@ -86,7 +86,7 @@ static DWORD TestModule(HMODULE, LPWSTR out, DWORD n) {
 }
 static BOOL TestFlush(HANDLE h) {
   ++flushCalls;
-  if (fault == 1) { SetLastError(ERROR_DISK_FULL); return FALSE; }
+  if (fault == 1 || fault == 7) { SetLastError(ERROR_DISK_FULL); return FALSE; }
   return FlushFileBuffers(h);
 }
 static BOOL TestMove(LPCWSTR from, LPCWSTR to, DWORD flags) {
@@ -101,6 +101,11 @@ static BOOL TestMove(LPCWSTR from, LPCWSTR to, DWORD flags) {
   }
   return MoveFileExW(from, to, flags);
 }
+static BOOL TestDelete(LPCWSTR path) {
+  if(fault==7) { SetLastError(ERROR_ACCESS_DENIED); return FALSE; }
+  return DeleteFileW(path);
+}
+#define DeleteFileW TestDelete
 #define FlushFileBuffers TestFlush
 #define CryptProtectData TestProtect
 #define MoveFileExW TestMove
@@ -108,6 +113,7 @@ static BOOL TestMove(LPCWSTR from, LPCWSTR to, DWORD flags) {
 #define GetModuleFileNameW TestModule
 #include "../CPP/7zip/UI/FileManager/PasswordVault.cpp"
 #undef FlushFileBuffers
+#undef DeleteFileW
 #undef CryptProtectData
 #undef MoveFileExW
 #undef SHGetFolderPathW
@@ -213,13 +219,19 @@ static void RestoreTests(const UString &path) {
     Require(!r.Commit(error) && Bytes(path)==old,"changed primary aborts restore");
     Put(path,current);
   }
-  for(int f: {1,2}) {
+  for(int f: {1,2,7}) {
     CPasswordVaultRestore r; Require(r.Prepare(path,NULL,error),"prepare restore fault");
     CPasswordVault::SetCachedMasterPassword(L"clear-me"); fault=f;
     const bool ok=r.Commit(error); fault=0;
     Require(!ok && Bytes(path)==current && Bytes(backup)==old && !CPasswordVault::HaveCachedMasterPassword(),
         "restore flush/replace failure preserves bytes and clears cache");
-    Require(r.SystemError==(f==1?ERROR_DISK_FULL:ERROR_ACCESS_DENIED),"restore preserves the original failing API error code");
+    Require(r.SystemError==(f==2?ERROR_ACCESS_DENIED:ERROR_DISK_FULL),"restore preserves the original failing API error code");
+    if(f==7) {
+      Require(!r.CleanupWarning.IsEmpty() && r.CleanupWarning.Find(r.SafetyCopyPath)>=0 &&
+          GetFileAttributesW(r.SafetyCopyPath)!=INVALID_FILE_ATTRIBUTES,
+          "cleanup failure reports retained ciphertext separately from restore failure");
+      Require(DeleteFileW(r.SafetyCopyPath)!=0,"remove own injected cleanup fixture");
+    } else Require(r.CleanupWarning.IsEmpty(),"successful cleanup has no warning");
     if(f==2) Require(Bytes(r.SafetyCopyPath)==current,"failed replacement retains verified safety copy");
   }
   {
@@ -276,6 +288,11 @@ static void RestoreTests(const UString &path) {
     Require(Wait(child)==(crash==3?73:74),"restore child stopped at requested commit boundary");
     Require(Bytes(path)==(crash==3?current:old) && Bytes(backup)==old,
         "restore process crash leaves a complete generation and intact backup");
+    if(crash==3) {
+      const UString material=PasswordVault_FindRestoreMaterial(path);
+      Require(!material.IsEmpty() && Bytes(material)==old,"interrupted restore ciphertext is discoverable without consuming it");
+      Require(PasswordVault_FindRestoreMaterial(path+L".different").IsEmpty(),"recovery notice does not match another vault");
+    }
     WIN32_FIND_DATAW found;
     HANDLE search=FindFirstFileW(path+L".pre-restore-*",&found);
     Require(search!=INVALID_HANDLE_VALUE,"restore crash leaves encrypted safety copy");
@@ -329,12 +346,27 @@ int wmain(int argc, wchar_t **argv) {
       fprintf(stderr,"LANGUAGE: %s\n",id);
       Require(lang.Open(name,"7-Zip"),"production language parser accepts complete resource");
       Require(lang.Get(2617)!=NULL,"restore button translation exists");
-      for(unsigned n=3880;n<=3887;n++) Require(lang.Get(n)!=NULL,"restore message translation exists");
+      for(unsigned n=3880;n<=3889;n++) Require(lang.Get(n)!=NULL,"restore message translation exists");
       for(const wchar_t *marker: {L"{0}",L"{1}",L"{2}",L"{3}",L"{4}"})
         Require(wcsstr(lang.Get(3882),marker)!=NULL,"restore confirmation retains every substitution");
     }
     puts("PASS: production language parser validates en, zh-cn, zh-tw and restore messages");
     if(wcscmp(argv[1],L"languages")==0) return 0;
+  }
+  if(wcscmp(argv[1],L"cross-account-seed")==0) {
+    CPasswordVault v; v.SetPath(path); Require(v.Load(NULL,error),"cross-account seed load");
+    Add(v,L"cross-account-generation-one"); Require(v.Save(error),"cross-account first encrypted generation");
+    Add(v,L"cross-account-generation-two"); Require(v.Save(error),"cross-account second encrypted generation");
+    puts("PASS: real DPAPI backup fixture created for this Windows account"); return 0;
+  }
+  if(wcscmp(argv[1],L"cross-account-reject")==0) {
+    const auto primary=Bytes(path), backup=Bytes(path+L".bak");
+    CPasswordVaultRestore r; CPasswordVault::SetCachedMasterPassword(L"clear-me");
+    Require(!r.Prepare(path,NULL,error) && r.Stage==L"authenticate-backup" && !error.IsEmpty(),
+        "different Windows account cannot authenticate the DPAPI backup");
+    Require(Bytes(path)==primary && Bytes(path+L".bak")==backup && !r.Committed &&
+        !CPasswordVault::HaveCachedMasterPassword(),"wrong-account refusal leaves files unchanged and clears cache");
+    puts("PASS: real cross-account DPAPI restore refusal and unchanged encrypted files"); return 0;
   }
   if(wcscmp(argv[1],L"restore-lease")==0) {
     CPasswordVault v; v.SetPath(path); Require(v.Load(NULL,error),"child holds vault lease");

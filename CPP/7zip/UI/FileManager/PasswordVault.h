@@ -149,6 +149,7 @@ class CPasswordVaultRestore
   bool _existed = false, _ready = false;
 public:
   UString SafetyCopyPath;
+  UString CleanupWarning; // Secondary failure; never changes Committed/SystemError.
   UString Stage;
   DWORD SystemError = 0;
   FILETIME BackupTime = {};
@@ -172,5 +173,9 @@ UString PasswordVault_GetText(UInt32 langID, const wchar_t *fallback);
 // Caption used by every message box the vault shows. Localized through the
 // 7-Zip lang files (IDT_PASSWORD_VAULT_CAPTION) with a built-in fallback.
 UString PasswordVault_GetCaption();
+
+// Read-only detection of interrupted restore material for this exact vault.
+UString PasswordVault_FindRestoreMaterial(const UString &path);
+void PasswordVault_NotifyRestoreMaterial(HWND parent, const UString &path);
 
 #endif

@@ -10,7 +10,7 @@ if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) 
   throw 'Use a separate standard-user account such as cs, not an administrator account with UAC filtered.'
 }
 $packages = @(
-  @{ relative='dist/restore-release-20260924/7z-password-vault-1.6.0-restore-dev3-win64-internal-test.zip'; hash='5fb6910ab854989250d8b1fbd777d54e2ade3a18432bcd31f7300f4938f18319'; folder='candidate' },
+  @{ relative='dist/restore-release-20260924/7z-password-vault-1.6.0-restore-dev4-win64-internal-test.zip'; hash='4b95dcb15d27a0db61f7cd3372855133f46ff43da8457180777e18ff39b0506b'; folder='candidate' },
   @{ relative='dist/v1.5.0-20260924/7z-password-vault-1.5.0-win64-portable.zip'; hash='81f9c9b16e91c07ccb353c3390c03396e4566f20f5acde0a5338941f6f8739b8'; folder='baseline' }
 )
 foreach ($package in $packages) {
@@ -43,6 +43,9 @@ $runs = @(Get-ChildItem -LiteralPath (Join-Path $stage 'tests/b') -Directory -Fi
 if ($runs.Count -ne 1) { throw "Expected exactly one GUI evidence directory under $stage; found $($runs.Count)" }
 $public = Join-Path ([Environment]::GetFolderPath('CommonDocuments')) ('7zpw-restore-evidence-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $public | Out-Null
+$crossManifest=Join-Path $repo 'tests/b/cross-account-seed-c383a72dc940408095fa53d2e46a5fad/seed.json'
+& $hostExe -NoProfile -File (Join-Path $PSScriptRoot 'restore-cross-account-test.ps1') -SeedManifest $crossManifest -OutputDirectory $public
+$crossExit=$LASTEXITCODE
 foreach ($name in 'result.json','upgrade-rollback-result.json') {
   $path = Join-Path $runs[0].FullName $name
   if (Test-Path -LiteralPath $path) {
@@ -53,11 +56,12 @@ foreach ($name in 'result.json','upgrade-rollback-result.json') {
 }
 [ordered]@{
   account=$identity.Name; windowsBuild=[Environment]::OSVersion.Version.ToString()
-  standardAccount=$true; coreExitCode=$coreExit; guiExitCode=$guiExit
+  standardAccount=$true; coreExitCode=$coreExit; guiExitCode=$guiExit; crossAccountExitCode=$crossExit
   coreLogSha256=(Get-FileHash -LiteralPath $coreLog).Hash
   guiLogSha256=(Get-FileHash -LiteralPath $guiLog).Hash
   packages=$packages; stage=$stage; finishedUtc=[DateTime]::UtcNow.ToString('o')
 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $public 'acceptance.json') -Encoding utf8
 Write-Host "Shared evidence: $public"
-Write-Host "Standard-user acceptance exit code: $guiExit"
-exit $guiExit
+$finalExit=if($guiExit){$guiExit}else{$crossExit}
+Write-Host "Standard-user acceptance exit code: $finalExit"
+exit $finalExit

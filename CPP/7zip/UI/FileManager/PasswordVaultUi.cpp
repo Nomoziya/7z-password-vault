@@ -115,6 +115,7 @@ void CPasswordVaultUi::Load(HWND parent)
 
   // Never move a vault automatically.
   _vault.SetPath(CPasswordVault::GetConfiguredPath());
+  PasswordVault_NotifyRestoreMaterial(parent, _vault.GetPath());
   UString error;
   _loaded = _vault.Load(parent, error);
   if (!_loaded && !error.IsEmpty())

@@ -62,6 +62,12 @@ try{
   [IO.File]::AppendAllText($guiProof,"`n")
   Must-Fail 'modified original GUI proof is rejected' {Assert-PublicReleaseEvidence ([pscustomobject]$public) $clean $lockPath}
   [IO.File]::WriteAllText($guiProof,(($gui | Select-Object classification,exitCode,passed,failed,scriptSha256,fileManagerSha256,guiSha256)|ConvertTo-Json));$gui.evidenceSha256=(Get-FileHash -LiteralPath $guiProof).Hash
+  $fullProof=[IO.File]::ReadAllText($guiProof)
+  $focused=$fullProof | ConvertFrom-Json
+  $focused | Add-Member -NotePropertyName scope -NotePropertyValue 'restore-focused'
+  [IO.File]::WriteAllText($guiProof,($focused|ConvertTo-Json));$gui.evidenceSha256=(Get-FileHash -LiteralPath $guiProof).Hash
+  Must-Fail 'focused GUI proof cannot replace complete release acceptance' {Assert-PublicReleaseEvidence ([pscustomobject]$public) $clean $lockPath}
+  [IO.File]::WriteAllText($guiProof,$fullProof);$gui.evidenceSha256=(Get-FileHash -LiteralPath $guiProof).Hash
   [IO.File]::AppendAllText((Join-Path $clean '7z.exe'),'changed')
   Must-Fail 'runtime input differing from verified lock is rejected' {Assert-PublicReleaseEvidence ([pscustomobject]$public) $clean $lockPath}
   [IO.File]::WriteAllText((Join-Path $clean '7z.exe'),'7z.exe')

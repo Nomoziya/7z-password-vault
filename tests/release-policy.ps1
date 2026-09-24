@@ -61,6 +61,9 @@ function Assert-PublicReleaseEvidence($Evidence,[string]$Candidate,[string]$Inpu
     throw 'Original standard-user GUI result file is missing or changed.'
   }
   $guiResult=Get-Content -LiteralPath $guiEvidencePath -Raw | ConvertFrom-Json
+  if($guiResult.scope -and $guiResult.scope -ne 'full'){
+    throw 'Focused GUI checks cannot replace full standard-user release acceptance.'
+  }
   foreach($field in 'classification','exitCode','passed','failed','scriptSha256','fileManagerSha256','guiSha256'){
     if($guiResult.$field -ne $gui.$field){throw "Standard-user GUI result differs from release evidence: $field"}
   }

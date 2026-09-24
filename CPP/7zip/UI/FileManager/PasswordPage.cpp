@@ -443,6 +443,11 @@ void CPasswordPage::OnRestore()
     if (restore.Stage == L"vault-in-use-close-password-windows")
       error = PasswordVault_GetText(IDT_PASSWORD_RESTORE_BUSY,
           L"此密码库仍被其他窗口使用。请关闭使用此库的密码窗口后重试；文件没有改变。");
+    if (!restore.CleanupWarning.IsEmpty())
+    {
+      error += L"\n\n";
+      error += restore.CleanupWarning;
+    }
     ErrorBox(*this, error);
     return;
   }

@@ -435,9 +435,73 @@ struct CTempVaultCleanup
 {
   const UString &Path;
   bool Created;
-  CTempVaultCleanup(const UString &path): Path(path), Created(false) {}
-  ~CTempVaultCleanup() { if (Created) ::DeleteFileW(Path); }
+  UString *Warning;
+  CTempVaultCleanup(const UString &path, UString *warning = NULL):
+      Path(path), Created(false), Warning(warning) {}
+  ~CTempVaultCleanup()
+  {
+    const DWORD savedError = ::GetLastError();
+    if (Created && !::DeleteFileW(Path))
+    {
+      const DWORD cleanupError = ::GetLastError();
+      if (Warning && cleanupError != ERROR_FILE_NOT_FOUND)
+      {
+        UString text = PasswordVault_GetText(IDT_PASSWORD_RESTORE_CLEANUP,
+            L"临时密文文件未能清理，请保留以便检查：\n{0}\n清理错误：{1}\n此提示不改变上述恢复结果。");
+        UString number; number.Add_UInt32(cleanupError);
+        text.Replace(UString(L"{0}"), Path);
+        text.Replace(UString(L"{1}"), number);
+        if (!Warning->IsEmpty()) *Warning += L"\n\n";
+        *Warning += text;
+      }
+    }
+    ::SetLastError(savedError);
+  }
 };
+
+UString PasswordVault_FindRestoreMaterial(const UString &path)
+{
+  const UString full = PasswordVault_NormalizePath(path);
+  if (full.IsEmpty()) return UString();
+  const int separator = full.ReverseFind_PathSepar();
+  if (separator < 0) return UString();
+  const UString prefix = UString(full.Ptr((unsigned)separator + 1)) + L".restore-tmp-";
+  WIN32_FIND_DATAW info;
+  HANDLE search = ::FindFirstFileW(full + L".restore-tmp-*", &info);
+  if (search == INVALID_HANDLE_VALUE) return UString();
+  UString found;
+  do
+  {
+    const UString name(info.cFileName);
+    // Treat names as untrusted. Detection only: never open, decrypt or remove.
+    if (name.IsPrefixedBy(prefix) && name.Len() > prefix.Len() &&
+        !(info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+    {
+      found = full.Left((unsigned)separator + 1) + name;
+      break;
+    }
+  }
+  while (::FindNextFileW(search, &info));
+  ::FindClose(search);
+  return found;
+}
+
+void PasswordVault_NotifyRestoreMaterial(HWND parent, const UString &path)
+{
+  // Called only on the UI thread; once per vault per process, no persisted state.
+  static UStringVector notified;
+  const UString canonical = GetCanonicalVaultPath(path);
+  if (canonical.IsEmpty()) return;
+  FOR_VECTOR(i, notified) if (notified[i] == canonical) return;
+  const UString material = PasswordVault_FindRestoreMaterial(path);
+  if (material.IsEmpty()) return;
+  notified.Add(canonical);
+  UString message = PasswordVault_GetText(IDT_PASSWORD_RESTORE_LEFTOVER,
+      L"发现密码库恢复临时文件，可能来自中断或正在进行的恢复：\n{0}\n\n"
+      L"程序没有自动使用或删除它。请先关闭其他密码窗口，保留此文件及同目录的恢复前副本，再检查当前密码库。文件名不代表内容已经验证。");
+  message.Replace(UString(L"{0}"), material);
+  ::MessageBoxW(parent, message, PasswordVault_GetCaption(), MB_ICONINFORMATION | MB_OK);
+}
 
 static bool ReadBuf(CInFile &f, void *data, size_t size)
 {
@@ -1594,6 +1658,7 @@ bool CPasswordVaultRestore::Prepare(const UString &path, HWND parent, UString &e
   _ready = false;
   Committed = false;
   SafetyCopyPath.Empty();
+  CleanupWarning.Empty();
   SystemError = 0;
   error.Empty();
   _backup.SetPath(UString());
@@ -1671,13 +1736,13 @@ bool CPasswordVaultRestore::Commit(UString &error)
   if (exists)
   {
     SafetyCopyPath = _path + L".pre-restore-" + suffix;
-    CTempVaultCleanup partial(SafetyCopyPath);
+    CTempVaultCleanup partial(SafetyCopyPath, &CleanupWarning);
     if (!WriteRestoreImage(SafetyCopyPath, current, security.Value, partial.Created))
       return Fail(L"preserve-current", ::GetLastError(), error);
     partial.Created = false; // Keep a complete, verified safety copy even on later failure.
   }
   const UString temporary = _path + L".restore-tmp-" + suffix;
-  CTempVaultCleanup cleanup(temporary);
+  CTempVaultCleanup cleanup(temporary, &CleanupWarning);
   if (!WriteRestoreImage(temporary, backup, security.Value, cleanup.Created))
     return Fail(L"write-restored-image", ::GetLastError(), error);
   // Revalidate leaf safety immediately before publication. Never follow links.

@@ -1,5 +1,7 @@
 # 恢复功能候选验证
 
+本页为 dev3 冻结记录。新增收尾实现与 dev4 验收见 [最新收尾记录](restore-final-validation.md)；下文的未完成状态仅描述 dev3 当时范围。
+
 2026-09-24：开发候选，尚未公开发布。范围仅 Windows 11 Insider x64（本机 build 26220），未签名，Defender 未复核。协议见 `restore-protocol.md`，原计划见 `restore-previous-version-plan.md`。
 
 ## 当前冻结候选
