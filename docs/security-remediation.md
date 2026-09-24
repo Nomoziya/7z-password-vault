@@ -1,5 +1,7 @@
 # 技术评审整改记录
 
+> **当前范围：仅 Windows 11 Insider x64。** v1.5.0 正式版沿用已验收的 GUI EXE 哈希，从干净提交构建；正式包仍须单独核对 ZIP、清单和构建记录。下文 review4 阶段的 No-Go、未提交源码及 `internal-test` 状态是历史记录，不适用于通过当前门禁的新包。未签名和 Defender `not-reviewed` 仍是公开声明的限制。
+
 > 下文的签名硬门槛为历史评审状态。当前项目改用长期未签名 ZIP 政策；上游运行时来源已核验，`Nomozi` 与独立 `cs` 标准账户的 review3→review4 升级回滚均为 393/393。干净源码构建仍待完成，故公开发布仍为 No-Go。以 [BUILD.md](../BUILD.md)、[验收证据](review4-validation-evidence-20260924.json)和[未签名发布策略](signing-options.md)为准。
 
 本轮在已有未提交改动上继续修复。状态：受控内测，公开发布仍为 No-Go。
@@ -32,7 +34,7 @@
 - 当前发布门禁回归 32 项通过，包含敏感文件、子目录、隐藏文件、junction、清单穿越/重复/缺失、哈希篡改、拒绝 SFX、未签名候选的证据绑定、Windows 11 Insider 字段及 ZIP 解包复核。
 - 当前执行环境的 DPAPI 在隔离身份下不可用，原生加密测试已在获准的普通用户环境运行。
 
-## 仍然阻断公开发布
+## review4 阶段的发布阻断与现行限制（历史记录）
 
 1. 项目长期未签名；当前 review4 仍明确使用 `internal-test` 文件名。哈希和 sidecar 不能认证发布者。
 2. review4 未做当前最终哈希的 Defender 复核；本轮未上传文件，也未复用旧哈希结论。门禁允许如实记录 `not-reviewed`。

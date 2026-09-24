@@ -1,5 +1,9 @@
 # 当前验收范围与历史记录
 
+> **当前正式版验收范围仅为 Windows 11 Insider x64。** v1.5.0 使用与公开预发布版 `v1.5.0-rc.1` 相同的两个 GUI EXE 和运行时文件；独立标准用户 GUI 与升级回滚 **393/393**，普通用户原生密码库测试 PASS，压缩 **39/39**、运行时输入 **10/10**、发布门禁 **33/33**。正式 ZIP 须从干净提交打包，并单独核对其哈希、包内清单和构建记录。未签名与 `not-reviewed` 扫描状态如实公布；不对其他 Windows 版本作验收保证。
+
+## review4 阶段历史状态（下方 No-Go 仅适用于当时内测包）
+
 > **当前冻结内测包为 review4-release-20260923**（`7z-password-vault-26.03-review4-20260923-win64-internal-test.zip`，SHA-256 `37166d2b30f4d08d96239fac0e7bef5b77d88d6efca2e5d8196ae40bd1f62c7d`）。review3 在独立标准账户 `cs` 中启动 GUI 时暴露未打包的 MinGW DLL 依赖，现已由 review4 的静态链接修复。review4 压缩回归 39/39、运行时输入 10/10、包完整性验收通过；`cs` 的当前完整 GUI 与升级回滚验收为 **393/393**，先前单独 GUI 验收为 373/373。门禁脚本回归数量以本次输出为准，仅验证门禁逻辑，不改变冻结 review4 包。下方旧版 67/392 项、SFX、卸载器及其“通过”结论均为历史结果。Defender 本轮按用户要求不复核、不上传；两个 EXE 未签名。详见 [review4 验证记录](review4-validation-20260923.md)。
 
 > 当前政策为长期发布未签名 ZIP。review4 的上游输入来源已核验，`Nomozi` 普通桌面和独立 `cs` 标准账户均完成 review3→review4 升级回滚 GUI 验收，各为 **393/393**；[标准账户原始结果](review4-upgrade-rollback-cs-20260924.json)已纳入[证据索引](review4-validation-evidence-20260924.json)。构建时源码仍未提交，故**公开发布仍为 No-Go**。`not-reviewed` 或 `scan-unavailable` 只能如实记录，不能称为扫描通过。门禁细节见 [BUILD.md](../BUILD.md)。
