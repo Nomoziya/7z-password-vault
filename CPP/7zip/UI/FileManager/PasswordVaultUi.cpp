@@ -36,6 +36,25 @@ CPasswordVaultUi::~CPasswordVaultUi()
 {
 }
 
+bool CPasswordVaultUi::EnsureVaultReady(HWND parent)
+{
+  if (_vault.GetPath().IsEmpty())
+  {
+    Load(parent);
+    return _loaded;
+  }
+  UString error;
+  if (!_vault.EnsureAuthenticated(parent, error))
+  {
+    if (!error.IsEmpty())
+      VaultErrorMessage(parent, error);
+    _loaded = false;
+    return false;
+  }
+  _loaded = true;
+  return true;
+}
+
 void CPasswordVaultUi::ReadSettings()
 {
   NPasswordVault::CInfo settings;
@@ -69,7 +88,7 @@ void CPasswordVaultUi::Load(HWND parent)
   if (CPasswordVault::GetTwoDefaults(portable, roaming))
   {
     UString question = PasswordVault_GetText(IDT_PASSWORD_TWO_VAULTS_Q,
-        L"发现两个密码库文件：\n\n程序目录：{0}\n\n用户目录：{1}\n\n使用哪一个？\n\n"
+        L"发现两个密码库文件，请选择使用位置：\n\n程序目录：{0}\n\n用户目录：{1}\n\n使用哪一个？\n\n"
         L"「是」使用程序目录里的（不占用系统盘）\n"
         L"「否」使用用户目录里的\n"
         L"「取消」本次不决定，下次启动再问");
@@ -78,6 +97,7 @@ void CPasswordVaultUi::Load(HWND parent)
     const int answer = ::MessageBoxW(parent, question, PasswordVault_GetCaption(),
         MB_ICONQUESTION | MB_YESNOCANCEL);
 
+    if (answer == IDCANCEL) { _vault.SetPath(UString()); _loaded = false; return; }
     if (answer == IDYES || answer == IDNO)
     {
       const bool usePortable = (answer == IDYES);
@@ -93,12 +113,7 @@ void CPasswordVaultUi::Load(HWND parent)
     }
   }
 
-  /* First run after an update: an old vault in %APPDATA%\7-Zip moves next to the
-     program, so the system drive is not used for it any more. */
-  const UString moved = CPasswordVault::AdoptPortableDefault();
-  if (!moved.IsEmpty())
-    ::MessageBoxW(parent, moved, PasswordVault_GetCaption(), MB_ICONINFORMATION | MB_OK);
-
+  // Never move a vault automatically.
   _vault.SetPath(CPasswordVault::GetConfiguredPath());
   UString error;
   _loaded = _vault.Load(parent, error);
@@ -122,7 +137,7 @@ void CPasswordVaultUi::ScheduleAutoType(HWND parent, CEdit &edit)
   if (_selfChange)
     return;
 
-  UString text;
+  CVaultString text;
   edit.GetText(text);
   _pendingText = text;
 
@@ -140,9 +155,12 @@ bool CPasswordVaultUi::OnTimer(HWND parent, WPARAM timerID, CEdit &edit)
 
   ::KillTimer(parent, kPasswordVaultAutoTypeTimer);
 
-  UString text;
+  CVaultString text;
   edit.GetText(text);
   if (text.IsEmpty() || text != _pendingText || text == _lastFilledName)
+    return true;
+
+  if (!EnsureVaultReady(parent))
     return true;
 
   const int index = _vault.FindByName(text);
@@ -171,6 +189,8 @@ bool CPasswordVaultUi::OnTimer(HWND parent, WPARAM timerID, CEdit &edit)
 
 bool CPasswordVaultUi::ShowList(HWND parent, CEdit &edit)
 {
+  if (!EnsureVaultReady(parent))
+    return false;
   if (!_loaded)
   {
     /* Editing a vault that could not be read would delete or rewrite entries the user
@@ -179,13 +199,13 @@ bool CPasswordVaultUi::ShowList(HWND parent, CEdit &edit)
     return false;
   }
 
-  UString before;
+  CVaultString before;
   edit.GetText(before);
 
   CPasswordListDialog dialog(&_vault, (HWND)edit);
   dialog.Create(parent);
 
-  UString after;
+  CVaultString after;
   edit.GetText(after);
   if (after == before)
     return false;
@@ -203,6 +223,8 @@ bool CPasswordVaultUi::ShowList(HWND parent, CEdit &edit)
 
 bool CPasswordVaultUi::AddOrUpdate(HWND parent, const UString &name, const UString &password)
 {
+  if (!EnsureVaultReady(parent))
+    return false;
   if (!_loaded)
   {
     /* The vault could not be read (see Load). Saving now would write the empty list in
@@ -213,6 +235,7 @@ bool CPasswordVaultUi::AddOrUpdate(HWND parent, const UString &name, const UStri
 
   /* An empty name never identifies an entry: two unnamed entries have to stay
      two entries instead of overwriting each other. */
+  CObjectVector<CPasswordVaultEntry> before(_vault.Entries());
   const int index = name.IsEmpty() ? -1 : _vault.FindByName(name);
 
   if (index >= 0)
@@ -228,6 +251,8 @@ bool CPasswordVaultUi::AddOrUpdate(HWND parent, const UString &name, const UStri
   UString error;
   if (!_vault.Save(error, parent))
   {
+    _vault.ClearEntries();
+    _vault.Entries() = before;
     VaultErrorMessage(parent, error);
     return false;
   }
@@ -236,6 +261,8 @@ bool CPasswordVaultUi::AddOrUpdate(HWND parent, const UString &name, const UStri
 
 void CPasswordVaultUi::CreateNew(HWND parent, CEdit *edit)
 {
+  if (!EnsureVaultReady(parent))
+    return;
   if (!_loaded)
   {
     /* Asked here, not in AddOrUpdate: the name window must not open at all for a vault
@@ -245,7 +272,7 @@ void CPasswordVaultUi::CreateNew(HWND parent, CEdit *edit)
     return;
   }
 
-  UString current;
+  CVaultString current;
   if (edit)
     edit->GetText(current);
 
@@ -254,7 +281,7 @@ void CPasswordVaultUi::CreateNew(HWND parent, CEdit *edit)
   if (dialog.Create(parent) != IDOK)
     return;
 
-  UString name = dialog.Name;
+  CVaultString name = dialog.Name;
   name.Trim();
   if (!AddOrUpdate(parent, name, dialog.Value))
     return;
@@ -268,9 +295,8 @@ void CPasswordVaultUi::OfferToSave(HWND parent, const UString &password)
   if (password.IsEmpty() || !_promptToSaveNew)
     return;
 
-  /* A vault that could not be read reports itself when it is opened. Asking here as well
-     would mean a prompt on every password - the list in memory is empty, so nothing ever
-     matches - and the answer could not be honoured anyway. */
+  if (!EnsureVaultReady(parent))
+    return;
   if (!_loaded)
     return;
 
@@ -290,7 +316,7 @@ void CPasswordVaultUi::OfferToSave(HWND parent, const UString &password)
   if (dialog.Create(parent) != IDOK)
     return;
 
-  UString name = dialog.Name;
+  CVaultString name = dialog.Name;
   name.Trim();
   AddOrUpdate(parent, name, dialog.Value);
 }

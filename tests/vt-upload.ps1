@@ -30,11 +30,13 @@ $headers = @{ "x-apikey" = $key; accept = "application/json" }
 # installer is a wrapped 7z archive that engines look at differently from a bare exe.
 # dist\ is a build output folder and is not always there, so the list is built defensively.
 $files = @()
+. (Join-Path $PSScriptRoot 'runtime-input.ps1')
+$runtime = Resolve-TestRuntime
 $files += @(Get-ChildItem -LiteralPath (Join-Path $root "dist") -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Extension -in @(".zip", ".exe") } | Sort-Object Name | Select-Object -ExpandProperty FullName)
 $files += @(
-  (Join-Path $root "7-Zip-密码管家版\7zFM.exe"),
-  (Join-Path $root "7-Zip-密码管家版\7zG.exe")
+  (Join-Path $runtime "7zFM.exe"),
+  (Join-Path $runtime "7zG.exe")
 ) | Where-Object { Test-Path $_ }
 
 # A transient 502/503 from the API must not throw away a completed submission, so every call

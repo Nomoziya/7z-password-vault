@@ -109,8 +109,9 @@ public:
 
   void Wipe()
   {
-    if (_size != 0)
-      memset(_items, 0, _size * sizeof(T));
+    volatile unsigned char *p = (volatile unsigned char *)_items;
+    size_t bytes = _size * sizeof(T);
+    while (bytes--) *p++ = 0;
   }
 
   CBuffer& operator=(const CBuffer &buffer)

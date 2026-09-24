@@ -191,7 +191,7 @@ namespace NPasswordVault
 {
   struct CInfo
   {
-    FString VaultPath;           // empty = default (next to the program; %APPDATA% as fallback)
+    FString VaultPath;           // empty = user APPDATA default; other locations require an explicit choice
     bool UseMasterPassword;      // false = DPAPI, true = AES-256 with master password
     bool RememberMasterPassword; // cache master password for process lifetime
     bool AutoLockMaster;         // drop the cached master password after idle time

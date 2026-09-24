@@ -37,8 +37,8 @@ class CPasswordVaultUi
 
   /* The text that was current when the timer was started, and the text whose
      name was already filled in (so the same name is not offered twice). */
-  UString _pendingText;
-  UString _lastFilledName;
+  CVaultString _pendingText;
+  CVaultString _lastFilledName;
 
   /* Second password field to keep in sync: the add-to-archive dialog asks for
      the password twice, so filling only the first would make the two fields
@@ -48,6 +48,8 @@ class CPasswordVaultUi
   /* Set while the code itself writes to the edit, so the resulting EN_CHANGE
      does not look like typing. */
   bool _selfChange;
+
+  bool EnsureVaultReady(HWND parent);
 
   void ReadSettings();
   bool AddOrUpdate(HWND parent, const UString &name, const UString &password);

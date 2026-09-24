@@ -1,0 +1,14 @@
+{
+  "classification": "PASS",
+  "exitCode": 0,
+  "passed": 393,
+  "failed": 0,
+  "failedChecks": [],
+  "abortMessage": null,
+  "startedUtc": "2026-09-24T02:35:15.2684620Z",
+  "finishedUtc": "2026-09-24T02:40:07.9603533Z",
+  "scriptSha256": "0CF5072673949DC704CB30C6F2C4C15FB9A2E75A871F700987D9305CC0080BFF",
+  "runtimeDirectory": "C:\\Users\\cs\\AppData\\Local\\7zpw-upgrade-8257dbee9ba94fdab27f8ecad7117c17\\review4",
+  "fileManagerSha256": "D678E6B42EA574DB4DB26F66992E613535F76BB402A453AA02D66B0F4166BA92",
+  "guiSha256": "2B352BB0F7A94CF77AD3B53735F9803E36B3E5FC5F3FA94EF0FE8B5FA7F56AAD"
+}

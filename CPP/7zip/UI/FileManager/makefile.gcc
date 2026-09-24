@@ -17,7 +17,9 @@ endif
 # -lbcrypt   : PBKDF2 + AES-256-GCM (master password)
 # -lhtmlhelp : HtmlHelpW
 # -lmpr      : WNet* functions (Net.cpp)
-MY_LIBS = -mwindows -lcrypt32 -lbcrypt -lhtmlhelp -lmpr
+# -static   : keep MinGW C++/exception/thread runtimes inside the EXE so a
+#             standard Windows account needs no compiler installation or PATH.
+MY_LIBS = -static -mwindows -lcrypt32 -lbcrypt -lhtmlhelp -lmpr
 
 LOCAL_FLAGS = \
   -DZ7_LANG \
@@ -85,7 +87,6 @@ FM_OBJS = \
         $O/PasswordVaultUi.o \
   $O/PasswordPage.o \
   $O/ProgressDialog2.o \
-  $O/SetupShortcuts.o \
   $O/SettingsPage.o \
   $O/SplitDialog.o \
   $O/SystemPage.o \

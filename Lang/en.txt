@@ -251,7 +251,7 @@ Password
 Vault path (empty = default):
 Use master password (portable)
 Remember master password this session
-Lock the master password after 5 minutes idle
+Expire master password cache after 5 minutes (vault stays open)
 Show password by default
 Set master password...
 Browse...
@@ -466,7 +466,7 @@ The vault was changed by another window. Open it again:\n{0}
 3864
 The current vault cannot be read, so the location was not changed.\n\nMake sure the old file can be opened (or rename it) and then change the location.
 3865
-Two vault files were found:\n\nNext to the program: {0}\n\nUser folder: {1}\n\nWhich one should be used?\n\nYes - the one next to the program (does not use the system drive)\nNo - the one in the user folder\nCancel - decide later, ask again on the next start
+Two vault files were found. Choose which one to use:\n\nNext to the program: {0}\n\nUser folder: {1}\n\nWhich one should be used?\n\nYes - the one next to the program (does not use the system drive)\nNo - the one in the user folder\nCancel - decide later, ask again on the next start
 3866
 This vault will be used from now on:\n\n{0}\n\nThe other vault file was not touched and is still at:\n\n{1}
 3867

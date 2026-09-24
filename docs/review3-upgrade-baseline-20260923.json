@@ -1,0 +1,21 @@
+{
+  "purpose": "Test-only review3 baseline with missing MinGW runtime DLLs supplied locally; not a release package",
+  "sourceZip": "D:\\DSH Work\\7z-passward\\dist\\review3-release-20260923\\7z-password-vault-26.03-review3-20260923-win64-internal-test.zip",
+  "sourceZipSha256": "64082E6753DB9E20B95465DA3191CC85B2B20F11174C304E94D3264BB3530EE2",
+  "baselineFileManagerSha256": "A5F9F4E404783B9B8703DD331A7ACAAA06AA2BCF0F2AA5476B3F9C7E7A04B31F",
+  "baselineGuiSha256": "8B052D07025F1FF2341975BA79324660A459E9968733984346C65214146F8404",
+  "dlls": [
+    {
+      "file": "libgcc_s_seh-1.dll",
+      "sha256": "84BBA68E880017AB8B041B343E928A6D917F7601071B74530F334B2667A8913E"
+    },
+    {
+      "file": "libstdc++-6.dll",
+      "sha256": "A85B34E1E12778C5B4EFB20DF23449A1664FD211F24F1C8A9113A0B608CB2F18"
+    },
+    {
+      "file": "libwinpthread-1.dll",
+      "sha256": "5024707B039416C95BC524D4FC6ED6861A66E98B083B5160CCCF81DAF3C47C7E"
+    }
+  ]
+}

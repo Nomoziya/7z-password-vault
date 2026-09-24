@@ -2,7 +2,6 @@
 
 #include "StdAfx.h"
 
-#include "SetupShortcuts.h"   // first start: shortcuts + "Apps & features" entry
 
 #include "../../../Common/MyWindows.h"
 
@@ -423,17 +422,7 @@ static BOOL InitInstance(int nCmdShow)
   #endif
     wnd.Show(nCmdShow);
 
-  /* First start only: offer the Start Menu / desktop shortcuts and the "Apps & features"
-     entry. The self-extracting package cannot run anything after unpacking (7z.sfx ignores
-     its configuration), so this is where a downloaded package becomes convenient. Asked once,
-     current user only, and 7zG.exe never asks. */
-  SetupShortcuts_AskIfNeeded((HWND)wnd);
-
-  /* A portable copy that was moved keeps its shortcuts and its uninstall entry pointing at
-     the old folder. CheckLocation removes a registration whose folder is gone (quietly, and
-     only after checking that the entry really points there), ignores a folder that still
-     holds another copy, and otherwise offers to update the entries once per move. */
-  SetupShortcuts_CheckLocation((HWND)wnd);
+  // Public portable builds do not register shortcuts or an uninstaller.
 
   return TRUE;
 }

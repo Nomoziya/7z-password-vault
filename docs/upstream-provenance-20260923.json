@@ -1,0 +1,95 @@
+{
+  "classification": "PASS",
+  "checkedUtc": "2026-09-23T13:50:33.0012254Z",
+  "officialDigestPage": "https://github.com/ip7z/7zip/releases/expanded_assets/26.03",
+  "officialAssets": [
+    {
+      "file": "7z2603-extra.7z",
+      "sha256": "191894e6acb3647ffb69ce630479ff318523b2e2b9890aa7f05c1127c2e59b8f"
+    },
+    {
+      "file": "7z2603-src.7z",
+      "sha256": "41e2a7c0e9f838351c625e01f0f581a2188bb3dda10c8e0b4a852da26546ffe2"
+    },
+    {
+      "file": "7z2603-x64.exe",
+      "sha256": "0859c524b8a63551848f0c246abddcb1d0b7b656b0fbfe879f8d85e61a9e6edd"
+    }
+  ],
+  "candidate": "D:\\DSH Work\\7z-passward\\dist\\review4-candidate-20260923",
+  "archive": "7z-password-vault-26.03-review4-20260923-win64-internal-test.zip",
+  "archiveSha256": "37166d2b30f4d08d96239fac0e7bef5b77d88d6efca2e5d8196ae40bd1f62c7d",
+  "fileManagerSha256": "d678e6b42ea574db4db26f66992e613535f76bb402a453aa02d66b0f4166ba92",
+  "guiSha256": "2b352bb0f7a94cf77ad3b53735f9803e36b3e5fc5f3fa94ef0fe8b5fa7f56aad",
+  "runtime": [
+    {
+      "file": "7-zip.chm",
+      "sha256": "e0b70a83b79c938d7a868013ef94a0b1d34ff145f1e67bb7bf9a56aa913622cb",
+      "source": "7z2603-x64.exe"
+    },
+    {
+      "file": "7-zip.dll",
+      "sha256": "25a48d1f1cad86e81dd6504362cf039a381e14aa7a38b06cb7ba3839b735f35e",
+      "source": "7z2603-x64.exe"
+    },
+    {
+      "file": "7z.dll",
+      "sha256": "65e4c1f855f9ef6e8f0f5df8e3f27d9eb5f07311408639da0a1ca0b8f4871b0d",
+      "source": "7z2603-x64.exe"
+    },
+    {
+      "file": "7z.exe",
+      "sha256": "6ee3c0ed0b27663c1b948ae85a7c0bb073aed1498983182f3f0df1f6a8c30b2f",
+      "source": "7z2603-x64.exe"
+    },
+    {
+      "file": "descript.ion",
+      "sha256": "1da513f5a4e8018b9ae143884eb3eaf72454b606fd51f2401b7cfd9be4dbbf4f",
+      "source": "7z2603-x64.exe"
+    },
+    {
+      "file": "History.txt",
+      "sha256": "3247573b0ddc0102a50264cc131947950a2ea41d4817eefb5052c3c46658ba2a",
+      "source": "7z2603-x64.exe"
+    },
+    {
+      "file": "License.txt",
+      "sha256": "519ac0a4bded9c18ea02e0afb71f663d8c47373bd9facd3ac96a79f51d77765d",
+      "source": "7z2603-x64.exe"
+    },
+    {
+      "file": "readme.txt",
+      "sha256": "5a937b86702b4ee9ca878725ada8886f156fb64faf909092327bf85ca2fc159a",
+      "source": "7z2603-x64.exe"
+    }
+  ],
+  "sourceFilesIdentical": 1270,
+  "sourceFilesModified": 22,
+  "sourceFilesMissing": 0,
+  "modifiedSourcePaths": [
+    "C\\7zVersion.rc",
+    "CPP\\7zip\\7zip_gcc.mak",
+    "CPP\\7zip\\MyVersionInfo.rc",
+    "CPP\\7zip\\UI\\Common\\ZipRegistry.cpp",
+    "CPP\\7zip\\UI\\Common\\ZipRegistry.h",
+    "CPP\\7zip\\UI\\FileManager\\7zFM.exe.manifest",
+    "CPP\\7zip\\UI\\FileManager\\FM.cpp",
+    "CPP\\7zip\\UI\\FileManager\\FM.mak",
+    "CPP\\7zip\\UI\\FileManager\\OptionsDialog.cpp",
+    "CPP\\7zip\\UI\\FileManager\\PasswordDialog.cpp",
+    "CPP\\7zip\\UI\\FileManager\\PasswordDialog.h",
+    "CPP\\7zip\\UI\\FileManager\\PasswordDialog.rc",
+    "CPP\\7zip\\UI\\FileManager\\PasswordDialogRes.h",
+    "CPP\\7zip\\UI\\FileManager\\resource.rc",
+    "CPP\\7zip\\UI\\GUI\\7zG.exe.manifest",
+    "CPP\\7zip\\UI\\GUI\\CompressDialog.cpp",
+    "CPP\\7zip\\UI\\GUI\\CompressDialog.h",
+    "CPP\\7zip\\UI\\GUI\\CompressDialog.rc",
+    "CPP\\7zip\\UI\\GUI\\CompressDialogRes.h",
+    "CPP\\7zip\\UI\\GUI\\makefile",
+    "CPP\\7zip\\UI\\GUI\\UpdateCallbackGUI2.cpp",
+    "CPP\\Common\\MyBuffer.h"
+  ],
+  "inputLockSha256": "99a9cfed1fdc4f704baa844709e57b3dac3287982f25f6f870558860c6c5a891",
+  "interpretation": "Official asset digests and package bytes agree. The 22 changed source files are fork changes; this check does not prove a reproducible GUI build or publisher identity."
+}

@@ -12,11 +12,20 @@
 #   pwsh -File tests\core-test.ps1 -SevenZipDir "D:\path\to\7-Zip"
 
 param(
-  [string]$SevenZipDir = (Join-Path (Split-Path $PSScriptRoot -Parent) "7-Zip-密码管家版"),
+  [string]$SevenZipDir = '',
   [switch]$KeepArtifacts
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'runtime-input.ps1')
+$ownedRuntime=$null
+$work=$null
+try {
+if(-not $SevenZipDir){
+  $ownedRuntime=Join-Path $PSScriptRoot ('b\core-runtime-'+[guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $ownedRuntime -ErrorAction Stop | Out-Null
+  $SevenZipDir=Resolve-TestRuntime -ExtractionRoot $ownedRuntime
+}else{$SevenZipDir=Resolve-TestRuntime -Directory $SevenZipDir}
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $szExe = Join-Path $SevenZipDir "7z.exe"
@@ -25,7 +34,7 @@ if (!(Test-Path $szExe)) {
   exit 2
 }
 
-$work = Join-Path $env:TEMP "7z_core_test"
+$work = Join-Path $env:TEMP ("7z_core_test-" + [guid]::NewGuid().ToString("N"))
 $script:pass = 0
 $script:fail = 0
 function Check([string]$name, [bool]$ok, [string]$extra = "") {
@@ -40,7 +49,8 @@ function Run-7z([string[]]$argv) {
 }
 
 function New-TestTree([string]$root) {
-  Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+  if (-not ([IO.Path]::GetFullPath($root)).StartsWith([IO.Path]::GetFullPath($work) + "\", [StringComparison]::OrdinalIgnoreCase)) { throw "unsafe test tree path" }
+  Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $root | Out-Null
   Set-Content (Join-Path $root "small.txt") -Value "hello 7-zip" -Encoding UTF8
   Set-Content (Join-Path $root "空 格 名.txt") -Value "unicode name" -Encoding UTF8
@@ -99,8 +109,10 @@ $r = Run-7z @("t", "-pCorePw123", $enc)
 Check "correct password tests OK" ($r.Code -eq 0)
 $r = Run-7z @("t", "-pWrongPw", $enc)
 Check "wrong password is rejected" ($r.Code -ne 0)
-$r = Run-7z @("l", $enc)
-Check "encrypted headers hide the names" ($r.Code -ne 0 -or $r.Out -notmatch "small\.txt")
+# Header encryption requires a password even for listing. An omitted -p causes 7z
+# to wait for terminal input and stalls unattended acceptance runs.
+$r = Run-7z @("l", "-pWrongPw", $enc)
+Check "encrypted headers hide the names" ($r.Code -ne 0 -and $r.Out -notmatch "small\.txt")
 $dest = Join-Path $work "out_enc"
 Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
 $r = Run-7z @("x", "-pCorePw123", $enc, "-o$dest", "-y")
@@ -175,8 +187,25 @@ Check "an archive without -p needs no password" ($r.Code -eq 0)
 $r = Run-7z @("t", "-pSomePw", $mixed)
 Check "a password on an unencrypted archive is not fatal" ($r.Code -eq 0)
 
-if (-not $KeepArtifacts) { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue }
-
 Write-Host "`n== summary ==" -ForegroundColor Cyan
-Write-Host ("  passed: {0}   failed: {1}" -f $script:pass, $script:fail) -ForegroundColor $(if ($script:fail -eq 0) { "Green" } else { "Red" })
+Write-Host ("  passed: {0}   failed: {1}" -f $script:pass, $script:fail)
 exit $(if ($script:fail -eq 0) { 0 } else { 1 })
+} finally {
+if (-not $KeepArtifacts -and $work -and (Test-Path -LiteralPath $work)) {
+  if (-not ([IO.Path]::GetFullPath($work)).StartsWith([IO.Path]::GetFullPath($env:TEMP).TrimEnd("\") + "\7z_core_test-", [StringComparison]::OrdinalIgnoreCase)) { throw "unsafe test cleanup" }
+  Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if($ownedRuntime -and (Test-Path -LiteralPath $ownedRuntime)){
+  if($KeepArtifacts){Write-Host "Runtime retained: $ownedRuntime"}
+  else {
+    $base=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'b')).TrimEnd('\')+'\'
+    $target=[IO.Path]::GetFullPath($ownedRuntime)
+    if(-not $target.StartsWith($base,[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($target) -notmatch '^core-runtime-[a-f0-9]{32}$'){throw 'Unsafe runtime cleanup path'}
+    $ancestor=Get-Item -LiteralPath $target -Force
+    while($ancestor){if($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Runtime cleanup refused reparse ancestor'};$ancestor=$ancestor.Parent}
+    if(@(Get-ChildItem -LiteralPath $target -Recurse -Force | Where-Object {$_.Attributes -band [IO.FileAttributes]::ReparsePoint}).Count){throw 'Runtime cleanup refused reparse child'}
+    try{Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop;Write-Host "Runtime cleaned: $target"}catch{Write-Warning "Runtime cleanup failed: $target : $_";throw}
+  }
+}
+}

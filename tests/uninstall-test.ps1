@@ -8,7 +8,9 @@
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-$dist = Join-Path $root "7-Zip-密码管家版"
+. (Join-Path $PSScriptRoot 'runtime-input.ps1')
+$dist = Resolve-TestRuntime
+throw 'Historical uninstall suite is not applicable to portable ZIP releases. Run install-acceptance.ps1 -Package <zip> instead.'
 $regRoot = "HKCU:\Software\7-Zip"
 $regKey = "$regRoot\PasswordVault"
 $realVault = Join-Path $env:APPDATA "7-Zip\7zPasswordVault.dat"

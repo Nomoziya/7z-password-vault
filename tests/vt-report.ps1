@@ -24,7 +24,8 @@ if (-not $key) {
 }
 
 if (-not $Hashes -or $Hashes.Count -eq 0) {
-  $dir = Join-Path (Split-Path $PSScriptRoot -Parent) "7-Zip-密码管家版"
+  . (Join-Path $PSScriptRoot 'runtime-input.ps1')
+  $dir = Resolve-TestRuntime
   $files = @(
     (Join-Path $dir "7zFM.exe"),
     (Join-Path $dir "7zG.exe"),

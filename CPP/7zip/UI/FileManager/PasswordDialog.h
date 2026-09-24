@@ -22,8 +22,8 @@ class CPasswordEditDialog: public NWindows::NControl::CModalDialog
   virtual void OnOK() Z7_override;
   virtual bool OnButtonClicked(unsigned buttonID, HWND buttonHWND) Z7_override;
 public:
-  UString Name;
-  UString Value;
+  CVaultString Name;
+  CVaultString Value;
   /* Set when the user asked to delete the entry instead of saving it. */
   bool Deleted;
 
@@ -45,7 +45,7 @@ class CPasswordDialog: public NWindows::NControl::CModalDialog
   void SetTextSpec();
   void ReadControls();
 public:
-  UString Password;
+  CVaultString Password;
   bool ShowPassword;
 
   CPasswordDialog(): ShowPassword(false) {}

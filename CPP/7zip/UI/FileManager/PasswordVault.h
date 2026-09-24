@@ -21,41 +21,72 @@
    trimmed. Anything else is returned unchanged, so a plain file path stays a file. */
 UString PasswordVault_NormalizePath(const UString &path);
 
+// Owning string for vault secrets. Wipe the old value before replacement and
+// on scope exit, including cancellation and exception paths.
+class CVaultString: public UString
+{
+public:
+  CVaultString() {}
+  CVaultString(const UString &s): UString(s) {}
+  CVaultString(const CVaultString &s): UString(s) {}
+  void Wipe()
+  {
+    if (!IsEmpty()) ::SecureZeroMemory(Ptr_non_const(), (size_t)Len() * sizeof(wchar_t));
+    Empty();
+  }
+  CVaultString &operator=(const UString &s)
+  {
+    if ((const UString *)this != &s) { Wipe(); UString::operator=(s); }
+    return *this;
+  }
+  CVaultString &operator=(const CVaultString &s) { return operator=((const UString &)s); }
+  ~CVaultString() { Wipe(); }
+};
+
 struct CPasswordVaultEntry
 {
-  UString Name;
-  UString Password; // plaintext, kept in memory only; encrypted on disk
+  CVaultString Name;
+  CVaultString Password; // plaintext, kept in memory only; encrypted on disk
+
+  CPasswordVaultEntry() {}
+  CPasswordVaultEntry(const CPasswordVaultEntry &other):
+      Name(other.Name), Password(other.Password) {}
+  CPasswordVaultEntry &operator=(const CPasswordVaultEntry &other);
+  ~CPasswordVaultEntry();
 };
 
 class CPasswordVault
 {
   CObjectVector<CPasswordVaultEntry> _entries;
+  CObjectVector<CPasswordVaultEntry> _baseline;
+  CByteBuffer _loadedImage; // exact encrypted bytes, never a timestamp heuristic
   UString _path;
-  bool _masterMode; // how the file was last saved
+  bool _masterMode = false; // how the file was last saved
   /* The file exists but could not be read (locked, no permission, wrong account).
      Saving in that state would write the empty list in memory over the real file, so
      Save() refuses until a Load() succeeded. */
-  bool _readFailed = false;
+  bool _readFailed = true;
   /* Whether this object ever read a file: decides where the mode comes from and whether
      the file may be replaced. */
   bool _haveLoadedMode = false;
   bool _loadedExisted = false;
-  /* Size and write time of the file as it was read, to notice that another process
-     (7zFM and 7zG can both save) replaced it in the meantime. */
-  unsigned long long _loadedSize = 0;
-  unsigned long long _loadedWriteTime = 0;
 
   bool Load_DPAPI(NWindows::NFile::NIO::CInFile &f, Byte version, UString &errorMessage);
   bool Load_Master(HWND parent, NWindows::NFile::NIO::CInFile &f, UString &errorMessage);
   bool Save_DPAPI(NWindows::NFile::NIO::COutFile &f, UString &errorMessage);
   bool Save_Master(NWindows::NFile::NIO::COutFile &f, UString &errorMessage, HWND parent);
 
-  void RememberFileState();
-  void SerializeEntries(CByteBuffer &out);
+  bool SaveFile(UString &errorMessage, HWND parent, int modeOverride,
+      const CByteBuffer &previousImage, bool existed);
+  bool SerializeEntries(CByteBuffer &out, UString &errorMessage);
   bool ParseEntries(const Byte *data, size_t size, UString &errorMessage);
 
 public:
-  void SetPath(const UString &path) { _path = PasswordVault_NormalizePath(path); }
+  ~CPasswordVault();
+  void ClearEntries();
+  bool EnsureAuthenticated(HWND parent, UString &errorMessage, bool *reloaded = NULL);
+
+  void SetPath(const UString &path) { ClearEntries(); _baseline.Clear(); _loadedImage.Free(); _readFailed = true; _path = PasswordVault_NormalizePath(path); }
   const UString &GetPath() const { return _path; }
 
   CObjectVector<CPasswordVaultEntry> &Entries() { return _entries; }
@@ -65,13 +96,12 @@ public:
   static UString GetDefaultPath();
   static UString GetConfiguredPath();
 
-  /* The default location is the program folder (portable), so the vault does not
-     take space on the system drive. Called once before the vault is loaded: when no
-     path is configured and a vault still sits in %APPDATA%\7-Zip, that file is moved
-     next to the program. Returns the message to show, or an empty string. */
+  /* New vaults default to the current user's APPDATA directory. An existing
+     program-directory vault is still discovered for portable compatibility, but
+     sensitive data is never moved there automatically. */
   static UString AdoptPortableDefault();
 
-  /* No location was chosen yet and both default files exist. The program cannot
+  /* No location was chosen yet and BOTH default vault files exist. The program cannot
      guess which one the user means, so the UI asks once and records the answer
      with SetConfiguredPath. Returns false when there is nothing to ask. */
   static bool GetTwoDefaults(UString &portable, UString &roaming);

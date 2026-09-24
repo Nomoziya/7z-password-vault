@@ -1,3 +1,4 @@
+> **历史资料，不能作为本次整改版的放行证据。** 下列扫描、哈希和提交编号均保留原始历史含义；本次修改生成的新文件尚未取得这些结论。请以新候选包旁的 `.sha256`、`.build.json` 及同哈希原始扫描报告为准。当前流程见 BUILD.md。文中的旧发布形态、工具链推断和“已干净”表述均不适用于当前版本。
 # VirusTotal / Microsoft false positive report / 误报提交记录
 
 This file records the false-positive submissions for the release binaries, so the
@@ -154,8 +155,18 @@ Submission IDs of this round / 本轮提交编号: `7zFM.exe`
 
 ## Published set of v1.4.4 (2026-09-14) / v1.4.4 的发布集合
 
-The portable zip is the only published download (`installer\build.ps1` builds the SFX only with
-`-WithSetup`), so the wrapper's Elastic/CrowdStrike detections are no longer part of a release:
+> **Historical record - the hashes below describe that release, not the current build.**
+> Rebuilding the sources for the vault-safety work changed `7zFM.exe` and `7zG.exe`, so these
+> scan results must be treated as a **template for how to run and report the test**, never as
+> evidence about a current download. Always scan the exact file whose SHA-256 is in the shipped
+> `SHA256SUMS.txt`, and record that same hash in any submission. The current package hashes are
+> produced by `tests\deploy.ps1`; do not copy them into this document - a document hash goes
+> stale on the next build. The current binaries are **unsigned** (`NotSigned`), which is the
+> remaining reason engine verdicts are unstable.
+
+The portable zip is the only published download (`installer\build.ps1` is portable-only and now
+**refuses** `-WithSetup`), so the wrapper's Elastic/CrowdStrike detections are no longer part of a
+release:
 
 | File | Result |
 |------|--------|
@@ -169,7 +180,8 @@ certificate and, until then, one false-positive submission per rebuild.
 
 ### The verdicts fluctuate between scans / 同一文件不同时间扫描结果会变
 
-Measured on the same unchanged file: `7zG.exe` (`60587682…`) was reported as **0/65** earlier
+Measured on the same unchanged file: `7zG.exe` (`60587682…`, an **older release hash - historical,
+not the current build**) was reported as **0/65** earlier
 the same day and as **1/69** (`Microsoft: Trojan:Win32/Wacatac.B!ml`) a few hours later, and
 `7zFM.exe` switched between the `B!ml` and `C!ml` labels of the same family. The engine set and
 the machine-learning scores both move, so a single scan is an observation, not a property of
@@ -186,7 +198,7 @@ detection name and a description, and one file per submission:
 |-------|-------|
 | Submission type | Software developer |
 | File | `7zFM.exe` from `7z-password-vault-26.03-win64-portable.zip` |
-| SHA-256 | `a24e93c6fe72ea95dbb3797a246d41733b285a64ce23a8a807a8dcd9ac867ccb` |
+| SHA-256 | `<paste the current SHA-256 of 7zFM.exe from the shipped SHA256SUMS.txt>` (historical example that triggered the 1/69 verdict: `a24e93c6fe72ea95dbb3797a246d41733b285a64ce23a8a807a8dcd9ac867ccb` - **do not submit this old hash**) |
 | Detection name | `Trojan:Win32/Wacatac.B!ml` |
 | Product | `7-Zip Password Vault 26.03` (a modified build of 7-Zip 26.03) |
 | Verdict | Incorrectly detected / false positive |

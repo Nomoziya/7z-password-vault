@@ -16,7 +16,9 @@ endif
 # -lcrypt32  : DPAPI (password vault)
 # -lbcrypt   : PBKDF2 + AES-256-GCM (master password)
 # -lhtmlhelp : HtmlHelpW
-MY_LIBS = -mwindows -lcrypt32 -lbcrypt -lhtmlhelp
+# -static   : keep MinGW C++/exception/thread runtimes inside the EXE so a
+#             standard Windows account needs no compiler installation or PATH.
+MY_LIBS = -static -mwindows -lcrypt32 -lbcrypt -lhtmlhelp
 
 LOCAL_FLAGS = \
   -DZ7_LANG \

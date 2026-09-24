@@ -13,12 +13,14 @@
 # Exits non-zero when any label is clipped.
 
 param(
-  [string]$SevenZipDir = (Join-Path (Split-Path $PSScriptRoot -Parent) "7-Zip-密码管家版"),
+  [string]$SevenZipDir = '',
   [ValidateSet("en", "zh-cn", "zh-tw")][string]$UiLang = "en"
 )
 # temporary: measure every control text of every dialog of a process (finds clipped labels)
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'runtime-input.ps1')
+$SevenZipDir=Resolve-TestRuntime -Directory $SevenZipDir
 Add-Type @"
 using System; using System.Runtime.InteropServices; using System.Text;
 using System.Collections.Generic;

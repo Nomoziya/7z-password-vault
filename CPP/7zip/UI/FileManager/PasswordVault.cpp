@@ -5,6 +5,7 @@
 #include <wincrypt.h>
 #include <dpapi.h>
 #include <bcrypt.h>
+#include <shlobj.h>
 
 #include "../../../Windows/FileIO.h"
 #include "../../../Windows/ErrorMsg.h"
@@ -17,6 +18,10 @@
 
 #include "PasswordVault.h"
 
+// Upstream headers target Windows 2000; this fork supports Windows 10/11.
+// Keep the older header setting isolated from the rest of the 7-Zip sources.
+extern "C" WINBASEAPI DWORD WINAPI GetFinalPathNameByHandleW(HANDLE, LPWSTR, DWORD, DWORD);
+
 using namespace NWindows;
 using namespace NFile;
 using namespace NIO;
@@ -25,7 +30,7 @@ static const char kMagic[4] = { '7', 'Z', 'P', 'V' };
 static const wchar_t * const kDefaultFileName = L"7zPasswordVault.dat";
 /* Version 2: DPAPI mode stored entry names in clear.
    Version 3: DPAPI mode encrypts the names too. Version 2 files are still read. */
-static const Byte kVersion = 3;
+static const Byte kVersion = 4;
 static const Byte kVersion_Min = 2;
 
 static const unsigned kSaltSize = 16;
@@ -71,7 +76,7 @@ static void SetError(UString &errorMessage, UInt32 langID, const wchar_t *fallba
 // ---------------------------------------------------------------------------
 // master password session cache
 
-static UString g_MasterPassword;
+static CVaultString g_MasterPassword;
 static bool g_HaveMasterPassword = false;
 static DWORD g_MasterPasswordTick = 0;
 
@@ -84,11 +89,8 @@ static const DWORD kMasterIdleMs = 5 * 60 * 1000;
    optimize this away (volatile pointer). */
 static void SecureWipe(void *data, size_t size)
 {
-  if (!data || size == 0)
-    return;
-  volatile Byte *p = (volatile Byte *)data;
-  while (size-- != 0)
-    *p++ = 0;
+  if (data && size != 0)
+    ::SecureZeroMemory(data, size);
 }
 
 static void SecureWipeString(UString &s)
@@ -96,6 +98,39 @@ static void SecureWipeString(UString &s)
   if (!s.IsEmpty())
     SecureWipe(s.Ptr_non_const(), (size_t)s.Len() * sizeof(wchar_t));
   s.Empty();
+}
+
+CPasswordVaultEntry &CPasswordVaultEntry::operator=(const CPasswordVaultEntry &other)
+{
+  if (this != &other)
+  {
+    SecureWipeString(Name);
+    SecureWipeString(Password);
+    Name = other.Name;
+    Password = other.Password;
+  }
+  return *this;
+}
+
+CPasswordVaultEntry::~CPasswordVaultEntry()
+{
+  SecureWipeString(Name);
+  SecureWipeString(Password);
+}
+
+CPasswordVault::~CPasswordVault()
+{
+  ClearEntries();
+}
+
+void CPasswordVault::ClearEntries()
+{
+  FOR_VECTOR(i, _entries)
+  {
+    SecureWipeString(_entries[i].Name);
+    SecureWipeString(_entries[i].Password);
+  }
+  _entries.Clear();
 }
 
 void CPasswordVault::SetCachedMasterPassword(const UString &password)
@@ -123,13 +158,10 @@ bool CPasswordVault::HaveCachedMasterPassword()
 
 static UString GetVaultFolderPath()
 {
-  UString folder;
-  wchar_t buf[300];
-  const DWORD len = GetEnvironmentVariableW(L"APPDATA", buf, 300);
-  if (len != 0 && len < 300)
-    folder.SetFrom(buf, (unsigned)len);
-  else
-    folder = L".";
+  wchar_t buf[MAX_PATH];
+  if (FAILED(::SHGetFolderPathW(NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE,
+      NULL, SHGFP_TYPE_CURRENT, buf))) return UString();
+  UString folder = buf;
   folder += L"\\7-Zip";
   return folder;
 }
@@ -198,43 +230,137 @@ static UString GetProgramFolderPath()
   return path.Left((unsigned)pos);
 }
 
-/* Can a file be created in this folder? A program folder under Program Files cannot,
-   and then the vault has to stay in %APPDATA% instead of failing on every save. */
-static bool CanWriteToFolder(const UString &folder)
+// Never follow a vault leaf link. Missing leaves are valid for first save;
+// directories, reparse points and ambiguous hard-link aliases are not.
+static bool IsSafeVaultLeaf(const UString &path)
 {
-  if (folder.IsEmpty())
-    return false;
-  UString probe = folder;
-  probe.Add_PathSepar();
-  probe += kDefaultFileName;
-  probe += L".writetest";
-  /* a per process name: two processes (7zFM and 7zG) probing at the same moment would
-     otherwise see each other's file and both conclude "not writable" */
+  const DWORD attributes = ::GetFileAttributesW(path);
+  if (attributes == INVALID_FILE_ATTRIBUTES)
   {
-    UString pid;
-    pid.Add_UInt32((UInt32)::GetCurrentProcessId());
-    probe += L".";
-    probe += pid;
+    const DWORD error = ::GetLastError();
+    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
   }
-  /* FILE_FLAG_DELETE_ON_CLOSE: the probe removes itself when the handle is closed. */
-  HANDLE h = ::CreateFileW(probe, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-      FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
-  if (h == INVALID_HANDLE_VALUE)
+  if (attributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY))
+  {
+    ::SetLastError(ERROR_ACCESS_DENIED);
     return false;
+  }
+  HANDLE h = ::CreateFileW(path, FILE_READ_ATTRIBUTES,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+      FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, NULL);
+  if (h == INVALID_HANDLE_VALUE) return false;
+  BY_HANDLE_FILE_INFORMATION info;
+  const BOOL ok = ::GetFileInformationByHandle(h, &info);
+  const DWORD error = ::GetLastError();
   ::CloseHandle(h);
+  if (!ok) { ::SetLastError(error); return false; }
+  if ((info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) ||
+      info.nNumberOfLinks > 1)
+  {
+    ::SetLastError(ERROR_ACCESS_DENIED);
+    return false;
+  }
   return true;
 }
 
-static bool FileSizeMatches(const UString &path, const ULARGE_INTEGER &expected)
+// Real-time file scanners can briefly hold the destination open after a vault
+// write. Retry only sharing/access conflicts; each attempt remains one atomic
+// replacement, and persistent errors still abort the save without a fallback.
+static bool MoveVaultFileWithRetry(const UString &source, const UString &target)
 {
-  WIN32_FILE_ATTRIBUTE_DATA data;
-  if (!::GetFileAttributesExW(path, GetFileExInfoStandard, &data))
-    return false;
-  ULARGE_INTEGER actual;
-  actual.LowPart = data.nFileSizeLow;
-  actual.HighPart = data.nFileSizeHigh;
-  return actual.QuadPart == expected.QuadPart;
+  const DWORD flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH;
+  for (unsigned attempt = 0; attempt < 40; ++attempt)
+  {
+    if (!IsSafeVaultLeaf(target)) return false;
+    if (::MoveFileExW(source, target, flags)) return true;
+    const DWORD error = ::GetLastError();
+    if ((error != ERROR_ACCESS_DENIED && error != ERROR_SHARING_VIOLATION) || attempt == 39)
+    {
+      ::SetLastError(error);
+      return false;
+    }
+    ::Sleep(25);
+  }
+  ::SetLastError(ERROR_ACCESS_DENIED);
+  return false;
 }
+
+static UString GetCanonicalVaultPath(const UString &path)
+{
+  wchar_t full[32768];
+  const DWORD n = ::GetFullPathNameW(path, Z7_ARRAY_SIZE(full), full, NULL);
+  UString s;
+  if (n != 0 && n < Z7_ARRAY_SIZE(full))
+    s.SetFrom(full, (unsigned)n);
+  else
+    s = path;
+  const int slash = s.ReverseFind_PathSepar();
+  if (slash >= 0)
+  {
+    const UString dir = s.Left((unsigned)slash + 1);
+    HANDLE h = ::CreateFileW(dir, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h != INVALID_HANDLE_VALUE)
+    {
+      const DWORD len = ::GetFinalPathNameByHandleW(h, full, Z7_ARRAY_SIZE(full), FILE_NAME_NORMALIZED);
+      ::CloseHandle(h);
+      if (len != 0 && len < Z7_ARRAY_SIZE(full))
+      {
+        const UString leaf = s.Ptr() + slash + 1;
+        s.SetFrom(full, (unsigned)len);
+        if (!IS_PATH_SEPAR(s.Back())) s.Add_PathSepar();
+        s += leaf;
+      }
+    }
+  }
+  ::CharUpperBuffW(s.Ptr_non_const(), s.Len());
+  for (unsigned i = 0; i < s.Len(); i++)
+  {
+    wchar_t c = s[i];
+    if (c == L'/') c = L'\\';
+    if (c >= L'a' && c <= L'z') c = (wchar_t)(c - L'a' + L'A');
+    s.ReplaceOneCharAtPos(i, c);
+  }
+  return s;
+}
+
+static UInt64 HashVaultPath(const UString &path)
+{
+  const UString s = GetCanonicalVaultPath(path);
+  UInt64 h = 1469598103934665603ULL;
+  for (unsigned i = 0; i < s.Len(); i++)
+  {
+    const UInt16 c = (UInt16)s[i];
+    h ^= (Byte)c; h *= 1099511628211ULL;
+    h ^= (Byte)(c >> 8); h *= 1099511628211ULL;
+  }
+  return h;
+}
+
+class CVaultSaveLock
+{
+  HANDLE _handle;
+  bool _owned;
+public:
+  CVaultSaveLock(): _handle(NULL), _owned(false) {}
+  ~CVaultSaveLock()
+  {
+    if (_owned) ::ReleaseMutex(_handle);
+    if (_handle) ::CloseHandle(_handle);
+  }
+  bool Acquire(const UString &path)
+  {
+    if (!IsSafeVaultLeaf(path)) return false;
+    UString name = L"Global\\7-Zip.PasswordVault.";
+    name.Add_UInt64(HashVaultPath(path));
+    _handle = ::CreateMutexW(NULL, FALSE, name);
+    if (!_handle) return false;
+    const DWORD waitResult = ::WaitForSingleObject(_handle, 30000);
+    _owned = (waitResult == WAIT_OBJECT_0 || waitResult == WAIT_ABANDONED);
+    if (!_owned && waitResult == WAIT_TIMEOUT) ::SetLastError(ERROR_TIMEOUT);
+    return _owned && IsSafeVaultLeaf(path);
+  }
+};
 
 static void EnsureFolderExists(const UString &filePath)
 {
@@ -259,6 +385,24 @@ static bool WriteBuf(COutFile &f, const void *data, size_t size)
   return f.WriteFull(data, size);
 }
 
+class CVaultOutFile: public COutFile
+{
+public:
+  bool CreateExclusive(const UString &path)
+  {
+    return Create(path, GENERIC_WRITE, FILE_SHARE_READ, CREATE_NEW,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH);
+  }
+};
+
+struct CTempVaultCleanup
+{
+  const UString &Path;
+  bool Created;
+  CTempVaultCleanup(const UString &path): Path(path), Created(false) {}
+  ~CTempVaultCleanup() { if (Created) ::DeleteFileW(Path); }
+};
+
 static bool ReadBuf(CInFile &f, void *data, size_t size)
 {
   size_t processed = 0;
@@ -273,19 +417,6 @@ static bool WriteUInt32(COutFile &f, UInt32 v)
 static bool ReadUInt32(CInFile &f, UInt32 &v)
 {
   return ReadBuf(f, &v, 4);
-}
-
-static void AppendBuf(CByteBuffer &b, const void *data, size_t size)
-{
-  const size_t pos = b.Size();
-  b.ChangeSize_KeepData(pos + size, pos);
-  if (size != 0)
-    memcpy((Byte *)b + pos, data, size);
-}
-
-static void AppendUInt32(CByteBuffer &b, UInt32 v)
-{
-  AppendBuf(b, &v, 4);
 }
 
 static bool ReadBufMem(const Byte *data, size_t size, size_t &pos, void *out, size_t n)
@@ -330,7 +461,7 @@ static bool DpapiUnprotect(const void *data, size_t size, CByteBuffer &out)
   if (!CryptUnprotectData(&in, NULL, NULL, NULL, NULL, 0, &res))
     return false;
   out.CopyFrom((const Byte *)res.pbData, (size_t)res.cbData);
-  memset(res.pbData, 0, res.cbData);
+  ::SecureZeroMemory(res.pbData, res.cbData);
   LocalFree(res.pbData);
   return true;
 }
@@ -404,7 +535,7 @@ class CPasswordMasterDialog: public NWindows::NControl::CModalDialog
   virtual bool OnInit() Z7_override;
   virtual void OnOK() Z7_override;
 public:
-  UString Password;
+  CVaultString Password;
   INT_PTR Create(HWND parentWindow = NULL) { return CModalDialog::Create(IDD_PASSWORD_MASTER, parentWindow); }
 };
 
@@ -458,7 +589,12 @@ bool CPasswordVault::GetMasterPassword(HWND parent, UString &password, UString &
   if (g_HaveMasterPassword)
   {
     password = g_MasterPassword;
-    g_MasterPasswordTick = ::GetTickCount();
+    // A newly confirmed password is cached for the pending save even when the
+    // user disabled remembering. Consume that one-shot value, then erase it.
+    if (settings.RememberMasterPassword)
+      g_MasterPasswordTick = ::GetTickCount();
+    else
+      ClearCachedMasterPassword();
     return true;
   }
 
@@ -474,28 +610,23 @@ bool CPasswordVault::GetMasterPassword(HWND parent, UString &password, UString &
 // ---------------------------------------------------------------------------
 // path
 
+static bool VaultFileExists(const UString &path)
+{
+  const DWORD attr = ::GetFileAttributesW(path);
+  return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
 UString CPasswordVault::GetDefaultPath()
 {
-  const UString programFolder = GetProgramFolderPath();
-  UString portable;
-  if (!programFolder.IsEmpty())
-  {
-    portable = programFolder;
-    portable.Add_PathSepar();
-    portable += kDefaultFileName;
-  }
-
   UString roaming = GetVaultFolderPath();
+  if (roaming.IsEmpty()) return roaming;
   roaming.Add_PathSepar();
   roaming += kDefaultFileName;
-
-  /* Portable first: the vault sits next to the program. An existing file always
-     wins, so a vault in %APPDATA% is never silently replaced or lost. */
-  if (!portable.IsEmpty())
+  const UString folder = GetProgramFolderPath();
+  if (!folder.IsEmpty())
   {
-    if (::GetFileAttributesW(portable) != INVALID_FILE_ATTRIBUTES)
-      return portable;
-    if (::GetFileAttributesW(roaming) == INVALID_FILE_ATTRIBUTES && CanWriteToFolder(programFolder))
+    const UString portable = folder + L"\\" + kDefaultFileName;
+    if (VaultFileExists(portable) && !VaultFileExists(roaming))
       return portable;
   }
   return roaming;
@@ -513,6 +644,7 @@ static bool GetDefaultPair(UString &portable, UString &roaming)
   portable += kDefaultFileName;
 
   roaming = GetVaultFolderPath();
+  if (roaming.IsEmpty()) return false;
   roaming.Add_PathSepar();
   roaming += kDefaultFileName;
   return true;
@@ -527,11 +659,7 @@ bool CPasswordVault::GetTwoDefaults(UString &portable, UString &roaming)
 
   if (!GetDefaultPair(portable, roaming))
     return false;
-  if (::GetFileAttributesW(portable) == INVALID_FILE_ATTRIBUTES)
-    return false;
-  if (::GetFileAttributesW(roaming) == INVALID_FILE_ATTRIBUTES)
-    return false;
-  return true;
+  return VaultFileExists(portable) && VaultFileExists(roaming);
 }
 
 void CPasswordVault::SetConfiguredPath(const UString &path)
@@ -543,66 +671,9 @@ void CPasswordVault::SetConfiguredPath(const UString &path)
 
 UString CPasswordVault::AdoptPortableDefault()
 {
-  /* Nothing configured and the vault still sits in %APPDATA%\7-Zip: move it next to
-     the program, which is what the portable default is for. */
-  NPasswordVault::CInfo settings;
-  settings.Load();
-  if (!settings.VaultPath.IsEmpty())
-    return UString();   /* the location was chosen by the user - never touch it */
-
-  const UString programFolder = GetProgramFolderPath();
-  if (programFolder.IsEmpty() || !CanWriteToFolder(programFolder))
-    return UString();
-
-  UString portable = programFolder;
-  portable.Add_PathSepar();
-  portable += kDefaultFileName;
-
-  UString roaming = GetVaultFolderPath();
-  roaming.Add_PathSepar();
-  roaming += kDefaultFileName;
-
-  if (::GetFileAttributesW(portable) != INVALID_FILE_ATTRIBUTES)
-    return UString();   /* already portable */
-  if (::GetFileAttributesW(roaming) == INVALID_FILE_ATTRIBUTES)
-    return UString();   /* no old vault to move */
-
-  ULARGE_INTEGER sizeBefore;
-  sizeBefore.QuadPart = 0;
-  {
-    WIN32_FILE_ATTRIBUTE_DATA data;
-    if (::GetFileAttributesExW(roaming, GetFileExInfoStandard, &data))
-    {
-      sizeBefore.LowPart = data.nFileSizeLow;
-      sizeBefore.HighPart = data.nFileSizeHigh;
-    }
-  }
-  /* MOVEFILE_COPY_ALLOWED: %APPDATA% and the program folder are often on different
-     drives, and without this flag the move simply fails there (the portable default
-     then never happens and the user is never told). When it copies, the source is only
-     deleted after a successful copy. */
-  if (!::MoveFileExW(roaming, portable, MOVEFILE_COPY_ALLOWED))
-    return UString();   /* the old location stays in use */
-
-  /* A copy that was interrupted between the copy and the delete would leave a partial
-     file at the new place: check it before it is used. */
-  if (!FileSizeMatches(portable, sizeBefore))
-  {
-    ::DeleteFileW(portable);
-    return UString();
-  }
-
-
-  /* Persist the new location: the decision must not be re-derived from the file
-     system on every start (a second process, a temporarily unwritable folder or a
-     stray file would change the answer). */
-  settings.VaultPath = us2fs(portable);
-  settings.Save();
-
-  UString message = PasswordVault_GetText(IDT_PASSWORD_MOVED_TO_PORTABLE,
-      L"密码库文件已移动到程序所在文件夹：\n\n{0}");
-  message.Replace(UString(L"{0}"), portable);
-  return message;
+  /* Compatibility entry point retained for callers from older builds. Sensitive
+     data is no longer moved automatically; portable mode requires an explicit path. */
+  return UString();
 }
 
 UString CPasswordVault::GetConfiguredPath()
@@ -619,16 +690,34 @@ UString CPasswordVault::GetConfiguredPath()
 
 bool CPasswordVault::Load(HWND parent, UString &errorMessage)
 {
-  _entries.Clear();
+  errorMessage.Empty();
+  ClearEntries();
+  _baseline.Clear();
+  _loadedImage.Free();
   _masterMode = false;
   /* Failed until a load really succeeded: every "return false" below - a bad version,
      a bad header, a decryption or parse failure - then keeps saving disabled without
      having to be listed here. */
   _readFailed = true;
-  _loadedSize = 0;
-  _loadedWriteTime = 0;
   _haveLoadedMode = false;
   _loadedExisted = false;
+
+  if (_path.IsEmpty())
+  {
+    SetPathError(errorMessage, IDT_PASSWORD_ERR_OPEN,
+        L"无法打开密码库文件：\n{0}\n{1}", _path, ERROR_PATH_NOT_FOUND);
+    return false;
+  }
+
+  // Readers participate too: Windows read handles must not race a replacement,
+  // and parsing plus the encrypted snapshot must refer to one file generation.
+  CVaultSaveLock loadLock;
+  if (!loadLock.Acquire(_path))
+  {
+    SetPathError(errorMessage, IDT_PASSWORD_ERR_OPEN,
+        L"无法打开密码库文件：\n{0}\n{1}", _path, ::GetLastError());
+    return false;
+  }
 
   CInFile f;
   if (!f.Open(_path))
@@ -638,7 +727,7 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
        to look like an empty vault too - and then the next save wrote that empty list
        over the real file. */
     const DWORD sysError = ::GetLastError();
-    if (::GetFileAttributesW(_path) == INVALID_FILE_ATTRIBUTES)
+    if (sysError == ERROR_FILE_NOT_FOUND || sysError == ERROR_PATH_NOT_FOUND)
     {
       _readFailed = false; // really does not exist yet: an empty vault, not a failure
       return true;
@@ -648,7 +737,12 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
     _readFailed = true;
     return false;
   }
-
+  UInt64 fileLength = 0;
+  if (!f.GetLength(fileLength) || fileLength > kMaxCipherSize + 65536)
+  {
+    SetError(errorMessage, IDT_PASSWORD_ERR_FILE, L"密码库文件已损坏或无效");
+    return false;
+  }
 
   char magic[4];
   if (!ReadBuf(f, magic, 4) || memcmp(magic, kMagic, 4) != 0)
@@ -666,37 +760,173 @@ bool CPasswordVault::Load(HWND parent, UString &errorMessage)
   }
 
   Byte flags = 0;
-  if (!ReadBuf(f, &flags, 1))
+  if (!ReadBuf(f, &flags, 1) || flags > 1)
   {
     SetError(errorMessage, IDT_PASSWORD_ERR_FILE, L"密码库文件已损坏或无效");
     return false;
   }
 
   _masterMode = ((flags & 1) != 0);
-  const bool ok = _masterMode ? Load_Master(parent, f, errorMessage) : Load_DPAPI(f, version, errorMessage);
+  bool ok = _masterMode ? Load_Master(parent, f, errorMessage) : Load_DPAPI(f, version, errorMessage);
+  Byte trailing;
+  size_t processed = 0;
+  UInt64 length = 0;
+  if (ok)
+  {
+    ok = f.ReadFull(&trailing, 1, processed) && processed == 0 &&
+        f.GetLength(length) && length <= kMaxCipherSize + 65536 && f.SeekToBegin();
+    if (ok)
+    {
+      _loadedImage.Alloc((size_t)length);
+      ok = ReadBuf(f, _loadedImage, (size_t)length);
+    }
+    if (!ok) SetError(errorMessage, IDT_PASSWORD_ERR_DATA, L"密码库数据已损坏");
+  }
   if (ok)
   {
     _readFailed = false;
     _haveLoadedMode = true;
     _loadedExisted = true;
-    RememberFileState();
+    _baseline = _entries;
   }
+  else
+    ClearEntries();
   return ok;
 }
 
-void CPasswordVault::RememberFileState()
+bool CPasswordVault::EnsureAuthenticated(HWND parent, UString &errorMessage, bool *reloaded)
 {
-  _loadedSize = 0;
-  _loadedWriteTime = 0;
-  WIN32_FILE_ATTRIBUTE_DATA data;
-  if (!::GetFileAttributesExW(_path, GetFileExInfoStandard, &data))
-    return;
-  _loadedSize = ((unsigned long long)data.nFileSizeHigh << 32) | data.nFileSizeLow;
-  _loadedWriteTime = ((unsigned long long)data.ftLastWriteTime.dwHighDateTime << 32) |
-      data.ftLastWriteTime.dwLowDateTime;
+  if (reloaded) *reloaded = false;
+  if (_readFailed)
+  {
+    if (reloaded) *reloaded = true;
+    return Load(parent, errorMessage);
+  }
+  return !_readFailed;
+}
+
+static int FindExact(const CObjectVector<CPasswordVaultEntry> &entries, const CPasswordVaultEntry &e)
+{
+  FOR_VECTOR(i, entries)
+    if (entries[i].Name == e.Name && entries[i].Password == e.Password) return (int)i;
+  return -1;
 }
 
 bool CPasswordVault::Save(UString &errorMessage, HWND parent, int modeOverride)
+{
+  errorMessage.Empty();
+  // Roll back even callers that forget to restore their UI snapshot.
+  struct CRollback
+  {
+    CObjectVector<CPasswordVaultEntry> &entries;
+    const CObjectVector<CPasswordVaultEntry> &baseline;
+    bool committed;
+    CRollback(CObjectVector<CPasswordVaultEntry> &e, const CObjectVector<CPasswordVaultEntry> &b):
+        entries(e), baseline(b), committed(false) {}
+    ~CRollback()
+    {
+      if (!committed)
+      {
+        CPasswordVault::ClearCachedMasterPassword();
+        entries = baseline;
+      }
+    }
+  } rollback(_entries, _baseline);
+  if (!IsSafeVaultLeaf(_path) || !IsSafeVaultLeaf(_path + L".bak"))
+  {
+    SetPathError(errorMessage, IDT_PASSWORD_ERR_OPEN,
+        L"无法打开密码库文件：\n{0}\n{1}", _path, ::GetLastError());
+    return false;
+  }
+  EnsureFolderExists(_path);
+  CVaultSaveLock lock;
+  if (_readFailed || !lock.Acquire(_path))
+  {
+    SetPathError(errorMessage, IDT_PASSWORD_ERR_OPEN,
+        L"无法打开密码库文件：\n{0}\n{1}", _path, _readFailed ? 0 : ::GetLastError());
+    return false;
+  }
+
+  // Read the exact current bytes while holding the mutex. Mode/password changes
+  // must not try to decrypt an unchanged old file using the new master password.
+  CByteBuffer disk;
+  bool exists = false;
+  {
+    CInFile f;
+    if (f.Open(_path))
+    {
+      exists = true;
+      UInt64 size = 0;
+      if (!f.GetLength(size) || size > kMaxCipherSize + 65536) goto conflict;
+      disk.Alloc((size_t)size);
+      if (!ReadBuf(f, disk, disk.Size())) goto conflict;
+    }
+    else
+    {
+      const DWORD e = ::GetLastError();
+      if (e != ERROR_FILE_NOT_FOUND && e != ERROR_PATH_NOT_FOUND)
+      {
+        SetPathError(errorMessage, IDT_PASSWORD_ERR_OPEN,
+            L"无法打开密码库文件：\n{0}\n{1}", _path, e);
+        return false;
+      }
+    }
+  }
+  {
+    CPasswordVault candidate;
+    candidate.SetPath(_path);
+    if (exists == _loadedExisted && disk == _loadedImage)
+    {
+      candidate._entries = _entries;
+      candidate._masterMode = _masterMode;
+      candidate._haveLoadedMode = _haveLoadedMode;
+      candidate._readFailed = false;
+    }
+    else
+    {
+      // A mode change needs a fresh confirmation if another writer intervened.
+      // Deleting/recreating the vault must never resurrect an old snapshot.
+      if (modeOverride >= 0 || (_loadedExisted && !exists)) goto conflict;
+      if (!candidate.Load(parent, errorMessage)) return false;
+      if (_haveLoadedMode && candidate._masterMode != _masterMode) goto conflict;
+      CObjectVector<CPasswordVaultEntry> additions(_entries);
+      FOR_VECTOR(i, _baseline)
+      {
+        const int unchanged = FindExact(additions, _baseline[i]);
+        if (unchanged >= 0) additions.Delete((unsigned)unchanged);
+        else
+        {
+          const int removed = FindExact(candidate._entries, _baseline[i]);
+          if (removed < 0) goto conflict;
+          candidate._entries.Delete((unsigned)removed);
+        }
+      }
+      FOR_VECTOR(i, additions)
+      {
+        // Names are the UI's lookup keys. Never silently replace a concurrent
+        // addition with the same name; unnamed records remain distinct.
+        if (!additions[i].Name.IsEmpty() && candidate.FindByName(additions[i].Name) >= 0)
+          goto conflict;
+        candidate._entries.Add(additions[i]);
+      }
+    }
+    if (!candidate.SaveFile(errorMessage, parent, modeOverride, disk, exists)) return false;
+    _entries = candidate._entries;
+    _baseline = candidate._entries;
+    _loadedImage = candidate._loadedImage;
+    _masterMode = candidate._masterMode;
+    _haveLoadedMode = _loadedExisted = true;
+    rollback.committed = true;
+    return true;
+  }
+conflict:
+  SetPathError(errorMessage, IDT_PASSWORD_ERR_CHANGED,
+      L"密码库已被另一个窗口修改，请重新打开：\n{0}", _path, 0);
+  return false;
+}
+
+bool CPasswordVault::SaveFile(UString &errorMessage, HWND parent, int modeOverride,
+    const CByteBuffer &previousImage, bool existed)
 {
   if (_readFailed)
   {
@@ -709,6 +939,7 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent, int modeOverride)
   }
 
   EnsureFolderExists(_path);
+  bool savedUseMaster = false;
 
   /* Write to a temporary file first, then replace the real file atomically.
      Otherwise a crash / power loss in the middle of a write would destroy
@@ -717,23 +948,31 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent, int modeOverride)
   {
     /* 7zFM and 7zG can save at the same time: without the process id they would write
        the same temporary file and replace the vault with a half written one. */
-    UString pid;
-    pid.Add_UInt32((UInt32)::GetCurrentProcessId());
+    static LONG tempSerial = 0;
+    UString unique;
+    unique.Add_UInt32((UInt32)::GetCurrentProcessId());
+    unique += L".";
+    unique.Add_UInt32((UInt32)::GetTickCount());
+    unique += L".";
+    unique.Add_UInt32((UInt32)::InterlockedIncrement(&tempSerial));
     tmpPath += L".";
-    tmpPath += pid;
+    tmpPath += unique;
   }
 
+  CTempVaultCleanup cleanup(tmpPath);
   {
-    COutFile f;
-    if (!f.Create_ALWAYS(tmpPath))
+    CVaultOutFile f;
+    if (!f.CreateExclusive(tmpPath))
     {
       const DWORD sysError = ::GetLastError();
       SetPathError(errorMessage, IDT_PASSWORD_ERR_CREATE, L"无法创建密码库文件：\n{0}\n{1}",
           _path, sysError);
       return false;
     }
+    cleanup.Created = true;
 
     bool ok = WriteBuf(f, kMagic, 4) && WriteBuf(f, &kVersion, 1);
+    if (!ok) SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
 
     if (ok)
     {
@@ -745,8 +984,10 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent, int modeOverride)
       bool useMaster = _haveLoadedMode ? _masterMode : (settings.UseMasterPassword != 0);
       if (modeOverride >= 0)
         useMaster = (modeOverride != 0);
+      savedUseMaster = useMaster;
       const Byte flags = useMaster ? 1 : 0;
       ok = WriteBuf(f, &flags, 1);
+      if (!ok) SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
       if (ok)
         ok = useMaster ? Save_Master(f, errorMessage, parent) : Save_DPAPI(f, errorMessage);
     }
@@ -760,6 +1001,12 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent, int modeOverride)
       return false;
     }
 
+    if (ok && !::FlushFileBuffers(f.GetHandle()))
+    {
+      ok = false;
+      SetPathError(errorMessage, IDT_PASSWORD_ERR_WRITE,
+          L"无法写入密码库文件：\n{0}\n{1}", _path, ::GetLastError());
+    }
     f.Close();
 
     if (!ok)
@@ -769,26 +1016,67 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent, int modeOverride)
     }
   }
 
-  /* Another process may have saved after this one read the file. Replacing it
-     now would silently drop the entries that were added there. */
+  // Capture the exact encrypted output before the commit, while failures can
+  // still leave the original file untouched.
   {
-    WIN32_FILE_ATTRIBUTE_DATA now;
-    if (::GetFileAttributesExW(_path, GetFileExInfoStandard, &now))
+    CInFile check;
+    UInt64 size = 0;
+    if (!check.Open(tmpPath) || !check.GetLength(size) || size > kMaxCipherSize + 65536)
     {
-      const unsigned long long size = ((unsigned long long)now.nFileSizeHigh << 32) | now.nFileSizeLow;
-      const unsigned long long when = ((unsigned long long)now.ftLastWriteTime.dwHighDateTime << 32) |
-          now.ftLastWriteTime.dwLowDateTime;
-      if (size != _loadedSize || when != _loadedWriteTime)
+      check.Close();
+      ::DeleteFileW(tmpPath);
+      SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
+      return false;
+    }
+    _loadedImage.Alloc((size_t)size);
+    if (!ReadBuf(check, _loadedImage, _loadedImage.Size()))
+    {
+      check.Close();
+      ::DeleteFileW(tmpPath);
+      SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
+      return false;
+    }
+  }
+  // Preserve the exact encrypted generation read under the save mutex. No
+  // decryption/re-encryption: after a master change the backup needs the OLD key.
+  // Publish a fully flushed backup before replacing the primary vault. If backup
+  // creation fails, abort the save and leave the primary untouched.
+  if (existed)
+  {
+    const UString backupPath = _path + L".bak";
+    if (!IsSafeVaultLeaf(_path) || !IsSafeVaultLeaf(backupPath))
+    {
+      SetPathError(errorMessage, IDT_PASSWORD_ERR_REPLACE,
+          L"无法替换密码库文件：\n{0}\n{1}", backupPath, ::GetLastError());
+      return false;
+    }
+    const UString backupTemp = tmpPath + L".bak";
+    CTempVaultCleanup backupCleanup(backupTemp);
+    {
+      CVaultOutFile backup;
+      if (!backup.CreateExclusive(backupTemp))
       {
-        SetPathError(errorMessage, IDT_PASSWORD_ERR_CHANGED,
-            L"密码库已被另一个窗口修改，请重新打开：\n{0}", _path, 0);
-        ::DeleteFileW(tmpPath);
+        SetPathError(errorMessage, IDT_PASSWORD_ERR_CREATE,
+            L"无法创建密码库文件：\n{0}\n{1}", backupPath, ::GetLastError());
+        return false;
+      }
+      backupCleanup.Created = true;
+      if (!WriteBuf(backup, previousImage, previousImage.Size()) ||
+          !::FlushFileBuffers(backup.GetHandle()) || !backup.Close())
+      {
+        SetPathError(errorMessage, IDT_PASSWORD_ERR_WRITE,
+            L"无法写入密码库文件：\n{0}\n{1}", backupPath, ::GetLastError());
         return false;
       }
     }
+    if (!MoveVaultFileWithRetry(backupTemp, backupPath))
+    {
+      SetPathError(errorMessage, IDT_PASSWORD_ERR_REPLACE,
+          L"无法替换密码库文件：\n{0}\n{1}", backupPath, ::GetLastError());
+      return false;
+    }
   }
-
-  if (!::MoveFileExW(tmpPath, _path, MOVEFILE_REPLACE_EXISTING))
+  if (!MoveVaultFileWithRetry(tmpPath, _path))
   {
     /* The reason is captured before anything else runs: DeleteFileW below would
        overwrite it. */
@@ -799,34 +1087,62 @@ bool CPasswordVault::Save(UString &errorMessage, HWND parent, int modeOverride)
     return false;
   }
 
-  /* What was just written is the state we read now: without this the next save of the
-     same instance would compare against the old file and report a conflict. */
-  RememberFileState();
+  /* Commit both the file snapshot and the mode actually written. */
+  _masterMode = savedUseMaster;
+  _haveLoadedMode = true;
+  _loadedExisted = true;
+  _readFailed = false;
+
+
   return true;
 }
 
-void CPasswordVault::SerializeEntries(CByteBuffer &out)
+bool CPasswordVault::SerializeEntries(CByteBuffer &out, UString &errorMessage)
 {
-  AppendUInt32(out, (UInt32)_entries.Size());
+  size_t total = 4;
   FOR_VECTOR(i, _entries)
   {
     const CPasswordVaultEntry &e = _entries[i];
-    const UInt32 nameBytes = (UInt32)(e.Name.Len() * 2);
-    AppendUInt32(out, nameBytes);
-    if (nameBytes != 0)
-      AppendBuf(out, (const void *)(const wchar_t *)e.Name, nameBytes);
-    const UInt32 passBytes = (UInt32)(e.Password.Len() * 2);
-    AppendUInt32(out, passBytes);
-    if (passBytes != 0)
-      AppendBuf(out, (const void *)(const wchar_t *)e.Password, passBytes);
+    const size_t nameBytes = (size_t)e.Name.Len() * sizeof(wchar_t);
+    const size_t passBytes = (size_t)e.Password.Len() * sizeof(wchar_t);
+    if (nameBytes > kMaxNameBytes || passBytes > kMaxBlobSize ||
+        total > kMaxCipherSize - 8 || nameBytes > kMaxCipherSize - total - 8 ||
+        passBytes > kMaxCipherSize - total - 8 - nameBytes)
+    {
+      SetError(errorMessage, IDT_PASSWORD_ERR_DATA, L"密码库数据过大");
+      return false;
+    }
+    total += 8 + nameBytes + passBytes;
   }
+  if (total > kMaxCipherSize || _entries.Size() > kMaxEntries)
+  {
+    SetError(errorMessage, IDT_PASSWORD_ERR_DATA, L"密码库数据过大");
+    return false;
+  }
+
+  out.ChangeSize_KeepData(total, 0);
+  Byte *dest = (Byte *)(void *)out;
+  size_t pos = 0;
+  const UInt32 count = (UInt32)_entries.Size();
+  memcpy(dest + pos, &count, 4); pos += 4;
+  FOR_VECTOR(i, _entries)
+  {
+    const CPasswordVaultEntry &e = _entries[i];
+    const UInt32 nameBytes = (UInt32)((size_t)e.Name.Len() * sizeof(wchar_t));
+    memcpy(dest + pos, &nameBytes, 4); pos += 4;
+    if (nameBytes) { memcpy(dest + pos, (const wchar_t *)e.Name, nameBytes); pos += nameBytes; }
+    const UInt32 passBytes = (UInt32)((size_t)e.Password.Len() * sizeof(wchar_t));
+    memcpy(dest + pos, &passBytes, 4); pos += 4;
+    if (passBytes) { memcpy(dest + pos, (const wchar_t *)e.Password, passBytes); pos += passBytes; }
+  }
+  return true;
 }
 
 bool CPasswordVault::ParseEntries(const Byte *data, size_t size, UString &errorMessage)
 {
   size_t pos = 0;
   UInt32 count = 0;
-  if (!ReadUInt32Mem(data, size, pos, count))
+  if (!ReadUInt32Mem(data, size, pos, count) || count > kMaxEntries)
   {
     SetError(errorMessage, IDT_PASSWORD_ERR_DATA, L"密码库数据已损坏");
     return false;
@@ -834,48 +1150,46 @@ bool CPasswordVault::ParseEntries(const Byte *data, size_t size, UString &errorM
 
   for (UInt32 i = 0; i < count; i++)
   {
+    CPasswordVaultEntry entry;
     UInt32 nameBytes = 0;
-    if (!ReadUInt32Mem(data, size, pos, nameBytes) || (nameBytes & 1) != 0 || pos + nameBytes > size)
+    if (!ReadUInt32Mem(data, size, pos, nameBytes) || (nameBytes & 1) != 0 ||
+        nameBytes > kMaxNameBytes || nameBytes > size - pos)
     {
       SetError(errorMessage, IDT_PASSWORD_ERR_DATA, L"密码库数据已损坏");
       return false;
     }
-
-    UString name;
     {
       const unsigned charCount = nameBytes / 2;
-      wchar_t *p = name.GetBuf(charCount);
-      if (nameBytes != 0)
-        memcpy(p, data + pos, nameBytes);
+      wchar_t *p = entry.Name.GetBuf(charCount);
+      if (nameBytes) memcpy(p, data + pos, nameBytes);
       p[charCount] = 0;
-      name.ReleaseBuf_SetLen(charCount);
+      entry.Name.ReleaseBuf_SetLen(charCount);
     }
     pos += nameBytes;
 
     UInt32 passBytes = 0;
-    if (!ReadUInt32Mem(data, size, pos, passBytes) || (passBytes & 1) != 0 || pos + passBytes > size)
+    if (!ReadUInt32Mem(data, size, pos, passBytes) || (passBytes & 1) != 0 ||
+        passBytes > kMaxBlobSize || passBytes > size - pos)
     {
       SetError(errorMessage, IDT_PASSWORD_ERR_DATA, L"密码库数据已损坏");
       return false;
     }
-
-    UString password;
     {
       const unsigned charCount = passBytes / 2;
-      wchar_t *p = password.GetBuf(charCount);
-      if (passBytes != 0)
-        memcpy(p, data + pos, passBytes);
+      wchar_t *p = entry.Password.GetBuf(charCount);
+      if (passBytes) memcpy(p, data + pos, passBytes);
       p[charCount] = 0;
-      password.ReleaseBuf_SetLen(charCount);
+      entry.Password.ReleaseBuf_SetLen(charCount);
     }
     pos += passBytes;
-
-    CPasswordVaultEntry entry;
-    entry.Name = name;
-    entry.Password = password;
     _entries.Add(entry);
   }
 
+  if (pos != size)
+  {
+    SetError(errorMessage, IDT_PASSWORD_ERR_DATA, L"密码库数据已损坏");
+    return false;
+  }
   return true;
 }
 
@@ -899,7 +1213,7 @@ static bool Read_DPAPI_String(CInFile &f, UString &dest, UString &errorMessage)
     return false;
   }
 
-  CByteBuffer plain;
+  CByteBuffer_Wipe plain(0);
   if (!DpapiUnprotect((const Byte *)blob, blobSize, plain))
   {
     SetError(errorMessage, IDT_PASSWORD_ERR_DECRYPT, L"解密失败（可能不是同一个 Windows 账户或电脑）");
@@ -921,23 +1235,6 @@ static bool Read_DPAPI_String(CInFile &f, UString &dest, UString &errorMessage)
   return true;
 }
 
-static bool Write_DPAPI_String(COutFile &f, const UString &s, UString &errorMessage)
-{
-  CByteBuffer blob;
-  if (!DpapiProtect((const void *)(const wchar_t *)s, (size_t)s.Len() * sizeof(wchar_t), blob))
-  {
-    SetError(errorMessage, IDT_PASSWORD_ERR_ENCRYPT, L"加密失败");
-    return false;
-  }
-  const UInt32 blobSize = (UInt32)blob.Size();
-  if (!WriteUInt32(f, blobSize) || (blobSize != 0 && !WriteBuf(f, (const Byte *)blob, blobSize)))
-  {
-    SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
-    return false;
-  }
-  return true;
-}
-
 /* Reads a length-prefixed UTF-16 string stored in clear (used by vault version 2,
    where DPAPI mode did not encrypt the entry names). */
 static bool Read_PlainString(CInFile &f, UString &dest, UString &errorMessage)
@@ -949,7 +1246,7 @@ static bool Read_PlainString(CInFile &f, UString &dest, UString &errorMessage)
     return false;
   }
 
-  CByteBuffer buf(bytes);
+  CByteBuffer_Wipe buf(bytes);
   if (bytes != 0 && !ReadBuf(f, buf, bytes))
   {
     SetError(errorMessage, IDT_PASSWORD_ERR_ENTRY, L"密码库条目已损坏");
@@ -967,30 +1264,48 @@ static bool Read_PlainString(CInFile &f, UString &dest, UString &errorMessage)
 
 bool CPasswordVault::Load_DPAPI(CInFile &f, Byte version, UString &errorMessage)
 {
+  if (version >= 4)
+  {
+    UInt32 blobSize = 0;
+    if (!ReadUInt32(f, blobSize) || blobSize == 0 || blobSize > kMaxCipherSize + 65536)
+    {
+      SetError(errorMessage, IDT_PASSWORD_ERR_FILE, L"密码库文件已损坏或无效");
+      return false;
+    }
+    CByteBuffer blob(blobSize);
+    if (!ReadBuf(f, blob, blobSize))
+    {
+      SetError(errorMessage, IDT_PASSWORD_ERR_FILE, L"密码库文件已损坏或无效");
+      return false;
+    }
+    CByteBuffer_Wipe plain(0);
+    if (!DpapiUnprotect((const Byte *)blob, blobSize, plain))
+    {
+      SetError(errorMessage, IDT_PASSWORD_ERR_DECRYPT,
+          L"解密失败（文件可能被篡改，或不是同一个 Windows 账户或电脑）");
+      return false;
+    }
+    const bool ok = ParseEntries((const Byte *)plain, plain.Size(), errorMessage);
+    plain.Wipe();
+    return ok;
+  }
+
   UInt32 count = 0;
   if (!ReadUInt32(f, count) || count > kMaxEntries)
   {
     SetError(errorMessage, IDT_PASSWORD_ERR_FILE, L"密码库文件已损坏或无效");
     return false;
   }
-
   for (UInt32 i = 0; i < count; i++)
   {
     CPasswordVaultEntry entry;
-
-    /* Version 3 encrypts the names as well; version 2 stored them in clear. */
     const bool nameOk = (version >= 3)
         ? Read_DPAPI_String(f, entry.Name, errorMessage)
         : Read_PlainString(f, entry.Name, errorMessage);
-    if (!nameOk)
+    if (!nameOk || !Read_DPAPI_String(f, entry.Password, errorMessage))
       return false;
-
-    if (!Read_DPAPI_String(f, entry.Password, errorMessage))
-      return false;
-
     _entries.Add(entry);
   }
-
   return true;
 }
 
@@ -1018,11 +1333,11 @@ bool CPasswordVault::Load_Master(HWND parent, CInFile &f, UString &errorMessage)
     return false;
   }
 
-  UString master;
+  CVaultString master;
   if (!GetMasterPassword(parent, master, errorMessage))
     return false;
 
-  Byte key[kKeySize];
+  CByteBuffer_Wipe key(kKeySize);
   if (!DeriveKey(master, salt, kSaltSize, iterations, key))
   {
     SecureWipeString(master);
@@ -1030,50 +1345,48 @@ bool CPasswordVault::Load_Master(HWND parent, CInFile &f, UString &errorMessage)
     return false;
   }
 
-  CByteBuffer plain(cipherLen);
+  CByteBuffer_Wipe plain(cipherLen);
   const bool decOk = AesGcm(false, key, iv, kIvSize,
       (const Byte *)cipher, cipherLen, (Byte *)plain, tag, kTagSize);
-  SecureWipe(key, sizeof(key));
+  key.Wipe();
   SecureWipeString(master);
   if (!decOk)
   {
+    ClearCachedMasterPassword();
     SetError(errorMessage, IDT_PASSWORD_ERR_MASTER, L"主密码错误，或密码库文件已损坏");
     return false;
   }
 
-  if (!ParseEntries((const Byte *)plain, cipherLen, errorMessage))
-    return false;
-
+  const bool parsed = ParseEntries((const Byte *)plain, cipherLen, errorMessage);
   plain.Wipe();
-  return true;
+  return parsed;
 }
 
 bool CPasswordVault::Save_DPAPI(COutFile &f, UString &errorMessage)
 {
-  const UInt32 count = (UInt32)_entries.Size();
-  if (!WriteUInt32(f, count))
+  CByteBuffer_Wipe plain(0);
+  if (!SerializeEntries(plain, errorMessage))
+    return false;
+  CByteBuffer blob;
+  if (!DpapiProtect((const Byte *)plain, plain.Size(), blob))
+  {
+    plain.Wipe();
+    SetError(errorMessage, IDT_PASSWORD_ERR_ENCRYPT, L"加密失败");
+    return false;
+  }
+  plain.Wipe();
+  const UInt32 blobSize = (UInt32)blob.Size();
+  if (!WriteUInt32(f, blobSize) || !WriteBuf(f, (const Byte *)blob, blobSize))
   {
     SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
     return false;
   }
-
-  FOR_VECTOR(i, _entries)
-  {
-    const CPasswordVaultEntry &entry = _entries[i];
-    /* Names are encrypted too, so the file does not reveal what the saved
-       passwords are used for. */
-    if (!Write_DPAPI_String(f, entry.Name, errorMessage))
-      return false;
-    if (!Write_DPAPI_String(f, entry.Password, errorMessage))
-      return false;
-  }
-
   return true;
 }
 
 bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage, HWND parent)
 {
-  UString master;
+  CVaultString master;
   if (!GetMasterPassword(parent, master, errorMessage))
     return false;
 
@@ -1085,7 +1398,7 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage, HWND parent
     return false;
   }
 
-  Byte key[kKeySize];
+  CByteBuffer_Wipe key(kKeySize);
   if (!DeriveKey(master, salt, kSaltSize, kPbkdf2Iterations, key))
   {
     SecureWipeString(master);
@@ -1094,14 +1407,18 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage, HWND parent
   }
   SecureWipeString(master);
 
-  CByteBuffer plain;
-  SerializeEntries(plain);
-
-  CByteBuffer cipher(plain.Size());
+  CByteBuffer_Wipe plain(0);
+  if (!SerializeEntries(plain, errorMessage))
+  {
+    key.Wipe();
+    return false;
+  }
+  const UInt32 plainSize = (UInt32)plain.Size();
+  CByteBuffer cipher(plainSize);
   Byte tag[kTagSize];
   const bool encOk = AesGcm(true, key, iv, kIvSize,
-      (const Byte *)plain, (unsigned)plain.Size(), (Byte *)cipher, tag, kTagSize);
-  SecureWipe(key, sizeof(key));
+      (const Byte *)plain, plainSize, (Byte *)cipher, tag, kTagSize);
+  key.Wipe();
   plain.Wipe();
   if (!encOk)
   {
@@ -1113,8 +1430,8 @@ bool CPasswordVault::Save_Master(COutFile &f, UString &errorMessage, HWND parent
       !WriteUInt32(f, kPbkdf2Iterations) ||
       !WriteBuf(f, iv, kIvSize) ||
       !WriteBuf(f, tag, kTagSize) ||
-      !WriteUInt32(f, (UInt32)plain.Size()) ||
-      !WriteBuf(f, (const Byte *)cipher, plain.Size()))
+      !WriteUInt32(f, plainSize) ||
+      !WriteBuf(f, (const Byte *)cipher, plainSize))
   {
     SetError(errorMessage, IDT_PASSWORD_ERR_WRITE, L"无法写入密码库文件");
     return false;

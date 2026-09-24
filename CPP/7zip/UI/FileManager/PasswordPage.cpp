@@ -12,9 +12,22 @@
 #include "PasswordPage.h"
 #include "PasswordPageRes.h"
 #include "PasswordVault.h"
-#include "SetupShortcuts.h"   // the button registers the shortcuts / uninstall entry
 
 using namespace NWindows;
+
+// An unsuccessful settings operation must never retain a password acquired
+// during its load/prompt/save sequence, including cancellations and exceptions.
+class CPageMasterCacheGuard
+{
+  bool _success;
+public:
+  CPageMasterCacheGuard(): _success(false) {}
+  void Commit() { _success = true; }
+  ~CPageMasterCacheGuard()
+  {
+    if (!_success) CPasswordVault::ClearCachedMasterPassword();
+  }
+};
 
 #ifdef Z7_LANG
 static const UInt32 kLangIDs[] =
@@ -39,6 +52,7 @@ static const UInt32 kLangIDs[] =
 
 static void ErrorBox(HWND wnd, const UString &message)
 {
+  CPasswordVault::ClearCachedMasterPassword();
   if (message.IsEmpty())
     return;
   ::MessageBoxW(wnd, message, PasswordVault_GetCaption(), MB_ICONERROR | MB_OK);
@@ -122,6 +136,7 @@ void CPasswordPage::OnBrowse()
 
 void CPasswordPage::OnSetMasterPassword()
 {
+  CPageMasterCacheGuard cacheGuard;
   UString error;
   const UString vaultPath = GetVaultPathFromUi();
 
@@ -144,7 +159,7 @@ void CPasswordPage::OnSetMasterPassword()
     return;
   }
 
-  UString pw1, pw2;
+  CVaultString pw1, pw2;
   if (!CPasswordVault::PromptForMasterPassword(*this, pw1, error))
     return;
   if (!CPasswordVault::PromptForMasterPassword(*this, pw2, error))
@@ -192,6 +207,7 @@ void CPasswordPage::OnSetMasterPassword()
   }
 
   CheckButton(IDX_PASSWORD_USE_MASTER, true);
+  cacheGuard.Commit();
   _oldUseMaster = true;
   _oldVaultPath = us2fs(vaultPath);
   _needSave = true;
@@ -200,6 +216,7 @@ void CPasswordPage::OnSetMasterPassword()
 
 void CPasswordPage::OnClearMasterPassword()
 {
+  CPageMasterCacheGuard cacheGuard;
   UString error;
   const UString vaultPath = GetVaultPathFromUi();
 
@@ -240,6 +257,7 @@ void CPasswordPage::OnClearMasterPassword()
   }
 
   CheckButton(IDX_PASSWORD_USE_MASTER, false);
+  cacheGuard.Commit();
   _oldUseMaster = false;
   _oldVaultPath = us2fs(vaultPath);
   _needSave = true;
@@ -289,6 +307,7 @@ void CPasswordPage::OnExport()
 
 void CPasswordPage::OnImport()
 {
+  CPageMasterCacheGuard cacheGuard;
   CBrowseInfo bi;
   bi.hwndOwner = *this;
   bi.SaveMode = false;
@@ -323,6 +342,7 @@ void CPasswordPage::OnImport()
     return;
   }
 
+  CObjectVector<CPasswordVaultEntry> before(dst.Entries());
   unsigned added = 0;
   unsigned updated = 0;
   const CObjectVector<CPasswordVaultEntry> &srcEntries = src.Entries();
@@ -344,6 +364,8 @@ void CPasswordPage::OnImport()
 
   if (!dst.Save(error, *this))
   {
+    dst.ClearEntries();
+    dst.Entries() = before;
     ErrorBox(*this, error);
     return;
   }
@@ -361,6 +383,7 @@ void CPasswordPage::OnImport()
     msg.Replace(UString(L"{1}"), n);
   }
   InfoBox(*this, msg);
+  cacheGuard.Commit();
 }
 
 bool CPasswordPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
@@ -381,12 +404,6 @@ bool CPasswordPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
       return true;
     case IDB_PASSWORD_IMPORT:
       OnImport();
-      return true;
-    case IDB_PASSWORD_SETUP:
-      /* Not a setting: it registers the shortcuts and the "Apps & features" entry for the
-         folder the program runs in and reports the outcome. Nothing on the page changes, so
-         it must not enable Apply. */
-      SetupShortcuts_Register(*this, true);
       return true;
     case IDX_PASSWORD_USE_MASTER:
     case IDX_PASSWORD_REMEMBER:
@@ -420,6 +437,7 @@ LONG CPasswordPage::OnApply()
 {
   if (!_needSave)
     return PSNRET_NOERROR;
+  CPageMasterCacheGuard cacheGuard;
 
   UString pathU;
   _vaultPathEdit.GetText(pathU);
@@ -447,17 +465,16 @@ LONG CPasswordPage::OnApply()
     vault.SetPath(oldPath);
     if (!vault.Load(*this, error))
     {
-      /* The old vault cannot be read (damaged, another account, locked). The settings -
-         including a new location - are still stored, so the user has a way out; only the
-         rewrite of the file is skipped, because that would need the old contents. */
+      /* An unreadable source aborts the transaction without writing preferences. */
       oldVaultReadable = false;
       if (!error.IsEmpty())
         ErrorBox(*this, error);
     }
   }
 
-  if (!oldVaultReadable && pathChanged)
+  if (!oldVaultReadable && reEncrypt)
   {
+    CPasswordVault::ClearCachedMasterPassword();
     /* The old vault could not be read and the location changed: storing the new path
        would point the program at a file that has never been written, while the real
        passwords stay behind - and the next save would create an empty vault there.
@@ -468,6 +485,52 @@ LONG CPasswordPage::OnApply()
     return PSNRET_INVALID_NOCHANGEPAGE;
   }
 
+  // Enabling master mode through the checkbox also requires confirmation.
+  if (modeChanged && newUseMaster)
+  {
+    UString error;
+    CVaultString first, second;
+    if (!CPasswordVault::PromptForMasterPassword(*this, first, error) ||
+        !CPasswordVault::PromptForMasterPassword(*this, second, error))
+      return PSNRET_INVALID_NOCHANGEPAGE;
+    if (first.IsEmpty() || first != second)
+    {
+      ErrorBox(*this, PasswordVault_GetText(IDT_PASSWORD_MASTER_MISMATCH,
+          L"两次输入的密码不一致，或密码为空。"));
+      return PSNRET_INVALID_NOCHANGEPAGE;
+    }
+    CPasswordVault::SetCachedMasterPassword(first);
+  }
+  if (reEncrypt && oldVaultReadable)
+  {
+    UString error;
+    CPasswordVault destination;
+    bool saved = false;
+    if (pathChanged)
+    {
+      // Copy to a new location only. Keep the original as a recovery copy;
+      // replacing/merging an existing destination requires the Import action.
+      destination.SetPath(newPath);
+      if (FileExists(newPath))
+        error = PasswordVault_GetText(IDT_PASSWORD_ERR_CHANGED,
+            L"目标位置已存在密码库，请使用导入功能合并。");
+      else if (destination.Load(*this, error))
+      {
+        destination.Entries() = vault.Entries();
+        saved = destination.Save(error, *this, newUseMaster ? 1 : 0);
+      }
+    }
+    else
+      saved = vault.Save(error, *this, newUseMaster ? 1 : 0);
+    if (!saved)
+    {
+      ErrorBox(*this, error);
+      return PSNRET_INVALID_NOCHANGEPAGE;
+    }
+
+  }
+
+  // Commit all preferences only after migration/re-encryption succeeds.
   {
     NPasswordVault::CInfo settings;
     settings.Load();
@@ -485,38 +548,6 @@ LONG CPasswordPage::OnApply()
 
   NExtract::Save_ShowPassword(IsButtonCheckedBool(IDX_PASSWORD_SHOW_DEFAULT));
 
-  if (!remember)
-    CPasswordVault::ClearCachedMasterPassword();
-
-  if (reEncrypt && oldVaultReadable)
-  {
-    UString error;
-    vault.SetPath(newPath);
-    if (!vault.Save(error, *this, newUseMaster ? 1 : 0))
-    {
-      /* Store the previous mode again: a stored mode that does not match the file
-         would make the vault unreadable. */
-      NPasswordVault::CInfo back;
-      back.Load();
-      back.UseMasterPassword = _oldUseMaster;
-      /* The path is rolled back as well: a stored path that points at a file which was
-         never written would make the next start show an empty vault. */
-      back.VaultPath = _oldVaultPath;
-      back.Save();
-      ErrorBox(*this, error);
-      return PSNRET_INVALID_NOCHANGEPAGE;
-    }
-
-    if (pathChanged && oldVaultReadable && FileExists(oldPath))
-    {
-      UString msg = PasswordVault_GetText(IDT_PASSWORD_MOVED_Q,
-          L"密码库已写入新位置：\n\n{0}\n\n是否删除旧位置的密码库文件？\n\n{1}");
-      msg.Replace(UString(L"{0}"), newPath);
-      msg.Replace(UString(L"{1}"), oldPath);
-      if (::MessageBoxW(*this, msg, PasswordVault_GetCaption(), MB_ICONQUESTION | MB_YESNO) == IDYES)
-        ::DeleteFileW(oldPath);
-    }
-  }
 
   /* Show the path that is really used, so a folder entry is visibly resolved to
      the file inside it. The page must not look modified again afterwards, so the
@@ -525,8 +556,10 @@ LONG CPasswordPage::OnApply()
   _vaultPathEdit.SetText(newPath);
   _suppressChange = false;
 
+  if (!remember) CPasswordVault::ClearCachedMasterPassword();
   _oldVaultPath = us2fs(pathU);
   _oldUseMaster = newUseMaster;
   _needSave = false;
+  cacheGuard.Commit();
   return PSNRET_NOERROR;
 }

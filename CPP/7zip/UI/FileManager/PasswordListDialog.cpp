@@ -223,7 +223,21 @@ void CPasswordListDialog::ShowFilledHint(const UString &name)
 
 void CPasswordListDialog::FillItem(int index)
 {
-  if (!_vault || (unsigned)index >= _vault->Entries().Size())
+  if (!_vault)
+    return;
+  UString error;
+  bool reloaded = false;
+  if (!_vault->EnsureAuthenticated(*this, error, &reloaded))
+  {
+    VaultErrorMessage(*this, error);
+    return;
+  }
+  if (reloaded)
+  {
+    FillList();
+    return;
+  }
+  if ((unsigned)index >= _vault->Entries().Size())
     return;
 
   const CPasswordVaultEntry &entry = _vault->Entries()[(unsigned)index];
@@ -239,9 +253,24 @@ void CPasswordListDialog::FillItem(int index)
 
 void CPasswordListDialog::EditItem(int index)
 {
-  if (!_vault || (unsigned)index >= _vault->Entries().Size())
+  if (!_vault)
+    return;
+  UString error;
+  bool reloaded = false;
+  if (!_vault->EnsureAuthenticated(*this, error, &reloaded))
+  {
+    VaultErrorMessage(*this, error);
+    return;
+  }
+  if (reloaded)
+  {
+    FillList();
+    return;
+  }
+  if ((unsigned)index >= _vault->Entries().Size())
     return;
 
+  CObjectVector<CPasswordVaultEntry> before(_vault->Entries());
   CPasswordVaultEntry &entry = _vault->Entries()[(unsigned)index];
 
   CPasswordEditDialog dialog(false);
@@ -264,10 +293,12 @@ void CPasswordListDialog::EditItem(int index)
     entry.Password = dialog.Value;
   }
 
-  UString error;
   if (!_vault->Save(error, *this))
   {
+    _vault->ClearEntries();
+    _vault->Entries() = before;
     VaultErrorMessage(*this, error);
+    FillList();
     return;
   }
   _changed = true;

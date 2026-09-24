@@ -34,3 +34,7 @@ _o/
 /Win32/
 Debug/
 Release/
+
+# Local security build logs
+/CPP/7zip/UI/FileManager/build-security.log
+/CPP/7zip/UI/GUI/build-security.log

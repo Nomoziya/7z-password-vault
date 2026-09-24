@@ -3,9 +3,10 @@
 # It drives the real dialogs of 7zFM.exe through Win32 messages and real mouse
 # input, so it does not need any test framework.
 #
-# The test never touches the real vault: it points the VaultPath setting at a
-# file inside its own work directory and restores the whole PasswordVault
-# registry key when it finishes (also when it fails).
+# The test points VaultPath at a temporary encrypted vault and restores the
+# PasswordVault registry values when it finishes. For the two-default-path case,
+# it creates and removes an encrypted APPDATA fixture only when that file is absent;
+# an existing user vault is never overwritten.
 #
 # Because it clicks and types with the real mouse and keyboard, it takes over
 # the cursor for the duration of the run. Do not use the machine while it runs.
@@ -21,18 +22,27 @@
 #   pwsh -File tests\ui-test.ps1 -UiLang en
 #   pwsh -File tests\ui-test.ps1 -KeepArtifacts
 #
-# The default target is the packaged build in ..\7-Zip-密码管家版 .
+# The default target is the newest verified internal-test ZIP under dist.
 
 param(
-  [string]$SevenZipDir = (Join-Path (Split-Path $PSScriptRoot -Parent) "7-Zip-密码管家版"),
+  [string]$SevenZipDir = '',
   [ValidateSet("auto", "zh-cn", "en")][string]$UiLang = "auto",
   # another 7zFM/7zG (the user's own copy) normally makes the run refuse to start,
   # because it shares the vault settings and can overwrite this run's vault file
   [switch]$AllowOtherInstances,
+  [string]$BaselineDir = '',
   [switch]$KeepArtifacts
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'runtime-input.ps1')
+$SevenZipDir=Resolve-TestRuntime -Directory $SevenZipDir
+$baselineFm=$null
+if($BaselineDir){
+  $BaselineDir=(Resolve-Path -LiteralPath $BaselineDir -ErrorAction Stop).Path
+  $baselineFm=Join-Path $BaselineDir '7zFM.exe'
+  if(-not(Test-Path -LiteralPath $baselineFm -PathType Leaf)){throw 'Upgrade baseline lacks 7zFM.exe'}
+}
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $fmExe  = Join-Path $SevenZipDir "7zFM.exe"
@@ -78,6 +88,13 @@ $T = $script:titles[$UiLang]
 # The test finds every window by its title, so it has to run against the language it
 # expects. 7-Zip reads HKCU\Software\7-Zip\Lang, so that value is set for the run and
 # put back afterwards (the same way check-labels.ps1 does it).
+# An interrupted older run might have left the registry pointing at the fixed test
+# vault. Do not snapshot that temporary path as if it were the user's original one.
+$testVaultPath = Join-Path (Join-Path $env:TEMP '7zpw_test') 'test-vault.dat'
+$currentVaultPath = (Get-ItemProperty -Path 'HKCU:\Software\7-Zip\PasswordVault' -Name VaultPath -ErrorAction SilentlyContinue).VaultPath
+if ([string]::Equals([string]$currentVaultPath, $testVaultPath, [StringComparison]::OrdinalIgnoreCase)) {
+  throw "Previous UI test left VaultPath at '$testVaultPath'. Restore the original setting before another run."
+}
 $langKey = "HKCU:\Software\7-Zip"
 $savedLang = (Get-ItemProperty -Path $langKey -Name Lang -ErrorAction SilentlyContinue).Lang
 $script:restoreLang = $false
@@ -98,11 +115,27 @@ $masked    = ([string][char]0x2022) * 8   # what the list shows while passwords 
 
 $script:pass = 0
 $script:fail = 0
+$script:uiStartedUtc = [DateTime]::UtcNow.ToString('o')
+$script:uiFailedChecks = [System.Collections.Generic.List[string]]::new()
+$script:uiRunDirectory = Join-Path (Join-Path $PSScriptRoot 'b') ('ui-run-' + [guid]::NewGuid().ToString('N'))
+function Ensure-UiRunDirectory {
+  if (-not (Test-Path -LiteralPath $script:uiRunDirectory -PathType Container)) {
+    New-Item -ItemType Directory -Path $script:uiRunDirectory -ErrorAction Stop | Out-Null
+  }
+}
 function Check([string]$name, [bool]$ok, [string]$extra = "") {
   if ($ok) { $script:pass++; Write-Host ("  [PASS] " + $name) -ForegroundColor Green }
   else {
     $script:fail++
-    Write-Host ("  [FAIL] " + $name + " " + $extra) -ForegroundColor Red
+    $failureLine = "  [FAIL] " + $name + " " + $extra
+    $script:uiFailedChecks.Add($failureLine)
+    Write-Host $failureLine -ForegroundColor Red
+    try {
+      Ensure-UiRunDirectory
+      Add-Content -LiteralPath (Join-Path $script:uiRunDirectory 'failures.log') -Value $failureLine -Encoding UTF8
+    } catch {
+      Write-Host "  Could not retain GUI failure evidence: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
     if (-not $script:dumpShown) {
       # the first failure explains itself: every dialog of every running 7-Zip with its
       # controls (id, class, style, text). Only once, so the log stays readable.
@@ -251,6 +284,12 @@ public class VaultUiTest {
     return sb.ToString();
   }
   public static void SetEditText(IntPtr h, string s) { SendStr(h, 0x000C, IntPtr.Zero, s); }
+  /* Unlike WM_SETTEXT, WM_CHAR follows the edit control's normal input path and
+     notifies the Windows file dialog that its file-name model changed. */
+  public static void TypeEditText(IntPtr h, string s) {
+    Send(h, 0x00B1 /*EM_SETSEL*/, IntPtr.Zero, (IntPtr)(-1));
+    foreach (char c in s) Send(h, 0x0102 /*WM_CHAR*/, (IntPtr)c, (IntPtr)1);
+  }
   public static void ClickButton(IntPtr h) { PostMessageW(h, 0x00F5, IntPtr.Zero, IntPtr.Zero); }
 
   [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr h);
@@ -620,22 +659,25 @@ public class VaultUiTest {
   public static bool FillBrowseDialog(IntPtr dlg, string fullPath) {
     /* The shell dialog's window exists before its content does, so the controls are
        polled for instead of assumed. */
-    /* Three kinds of file dialog show up here, so all three name-box controls are
-       tried: 7-Zip's own IDD_BROWSE (path edit 102), the modern shell dialog (file
-       name edit 1001) and the classic dialog (file name box 1148, which is a combo
-       whose inner edit carries the id). */
+    /* The common dialog can expose both an address-bar Edit and a file-name Edit
+       with id 1001. Select the Edit inside the file-name combo (1148) first.
+       7-Zip's own browse dialog uses a separate path Edit with id 102. */
     IntPtr edit = IntPtr.Zero;
     var deadline = DateTime.UtcNow.AddSeconds(10);
     while (true) {
-      edit = FindDescendant(dlg, 102 /* IDE_BROWSE_PATH */);
-      if (edit == IntPtr.Zero) edit = FindChildByClassAndId(dlg, "Edit", 1001);
+      IntPtr fileNameCombo = FindDescendant(dlg, 1148);
+      if (fileNameCombo != IntPtr.Zero)
+        edit = FindChildByClassAndId(fileNameCombo, "Edit", 1001);
       if (edit == IntPtr.Zero) edit = FindChildByClassAndId(dlg, "Edit", 1148);
+      if (edit == IntPtr.Zero) edit = FindChildByClassAndId(dlg, "Edit", 102);
+      if (edit == IntPtr.Zero) edit = FindChildByClassAndId(dlg, "Edit", 1001);
       if (edit != IntPtr.Zero) break;
       if (DateTime.UtcNow >= deadline) return false;
       System.Threading.Thread.Sleep(100);
     }
     ClickControl(edit);
-    SetEditText(edit, fullPath);
+    TypeEditText(edit, fullPath);
+    if (GetControlText(edit) != fullPath) return false;
     System.Threading.Thread.Sleep(300);
     IntPtr ok = FindChildByClassAndId(dlg, "Button", 1);
     if (ok == IntPtr.Zero) ok = FindDescendant(dlg, 1);
@@ -691,7 +733,7 @@ function Clear-OwnInstances() {
       $path = $null
       try { $path = $proc.Path } catch { }
       if (-not $path) { continue }
-      foreach ($own in @($fmExe, $guiExe)) {
+      foreach ($own in @($fmExe, $guiExe, $baselineFm)) {
         if ($own -and [string]::Equals($path, $own, [System.StringComparison]::OrdinalIgnoreCase)) {
           try { $proc.Kill(); $killed++ } catch { }
           break
@@ -949,10 +991,8 @@ Set-ItemProperty -Path $regKey -Name "ShowPasswordInList" -Value 0 -Type DWord  
 Set-ItemProperty -Path $regKey -Name "CloseAfterFill"    -Value 1 -Type DWord   # close after filling by default
 Remove-Item $vault,$vaultTmp -Force -ErrorAction SilentlyContinue
 Check "the test does not use the real vault" ($vault -ne $realVault)
-# The program asks on its first start whether it should create shortcuts and an "Apps &
-# features" entry. The suite must not walk into that modal question on every start, so it
-# records an answer up front - the isolation snapshot restores the real value afterwards
-# (test 26 removes it again on purpose to check the question itself).
+# Older installer builds asked on first start. Keep that question suppressed during
+# unrelated GUI cases; the current portable build has no such registration flow.
 Set-ItemProperty -Path $regKey -Name "SetupAsked" -Value 1 -Type DWord
 Clear-OwnInstances
 Write-Host ("  UI language: {0}{1}" -f $UiLang, $(if ($script:restoreLang) { " (forced through HKCU\Software\7-Zip\Lang)" } else { "" })) -ForegroundColor DarkGray
@@ -1008,16 +1048,20 @@ function Apply-PasswordPage([uint32]$procId, [hashtable]$page) {
   [void](Wait-NoDialog $procId $T.Caption 6)
   return "asked"
 }
-# A Windows password box (ES_PASSWORD) cannot be read from another process: the system
-# returns an empty string on purpose, which is why "the box contains X" checks read
-# empty while every check that looks at the *result* (the archive opens, the list shows
-# the password) passes. So the password box is only checked for being there, and what
-# was filled in is verified through the outcome.
+# A masked Windows password edit cannot reliably be read from another process.
+# Verify that the control exists and is masked, unless the dialog's own Show Password
+# checkbox is selected. Archive and list outcomes verify the actual password value.
 function Test-PasswordBox([IntPtr]$dlg) {
   $edit = [VaultUiTest]::FindDescendant($dlg, 120)
   if ($edit -eq [IntPtr]::Zero) { return $false }
+  $className = [Text.StringBuilder]::new(64)
+  [void][VaultUiTest]::GetClassNameW($edit, $className, $className.Capacity)
+  if ($className.ToString() -ne 'Edit') { return $false }
   $style = [VaultUiTest]::GetWindowLongW($edit, -16)
-  return (($style -band 0x20) -ne 0)   # ES_PASSWORD
+  if (($style -band 0x20) -ne 0) { return $true }  # ES_PASSWORD
+  $show = [VaultUiTest]::FindDescendant($dlg, 3803)
+  if ($show -eq [IntPtr]::Zero) { return $false }
+  return ([VaultUiTest]::SendLong($show, 0x00F0, [IntPtr]::Zero, [IntPtr]::Zero) -eq 1)  # BM_GETCHECK
 }
 # The saved-passwords window is the only place where a password can be read back (its
 # list is not a password control), so the tests read it there.
@@ -1028,6 +1072,11 @@ function Get-ListPassword([IntPtr]$lst, [int]$row) {
 Write-Host "`n== 1. save a named password ==" -ForegroundColor Cyan
 $p = Start-Fm $archive
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears"
+if ($dlg -eq [IntPtr]::Zero) {
+  $p.Refresh()
+  $state = if ($p.HasExited) { "exited with code $($p.ExitCode)" } else { 'still running without a password dialog' }
+  throw "7zFM $state at the first GUI case; aborting dependent checks. Runtime: $fmExe"
+}
 
 $btnNew  = [VaultUiTest]::FindDescendant($dlg, 3809)
 $btnList = [VaultUiTest]::FindDescendant($dlg, 3808)
@@ -1045,7 +1094,7 @@ Start-Sleep -Milliseconds 300
 Check "vault file created" (Wait-File $vault)
 if (Test-Path $vault) {
   $b = [IO.File]::ReadAllBytes($vault)
-  Check "vault format version 3" ($b[4] -eq 3) "(got $($b[4]))"
+  Check "vault format version 4" ($b[4] -eq 4) "(got $($b[4]))"
   Check "DPAPI mode flag" ($b[5] -eq 0)
 }
 Check "password typed into input box" (Test-PasswordBox $dlg)
@@ -1554,11 +1603,12 @@ Check "the archive was created through the dialog" (Test-Path $madeArc)
 if (-not $g.HasExited) { Stop-Process -Id $g.Id -Force }
 if (Test-Path $madeArc) {
   $szExe = Join-Path $SevenZipDir "7z.exe"
-  # the password must be the one from the vault: test with it, and prove it is needed
+  # Supplying an explicit wrong password keeps this check non-interactive.
+  # Omitting -p makes 7z.exe prompt on stdin and leaves the test waiting forever.
   $null = & $szExe t "-pGuiMadePw" $madeArc 2>&1
   Check "the archive opens with the vault password" ($LASTEXITCODE -eq 0)
-  $null = & $szExe t $madeArc 2>&1
-  Check "the archive is really encrypted (no password fails)" ($LASTEXITCODE -ne 0)
+  $null = & $szExe t "-pNotGuiMadePw" $madeArc 2>&1
+  Check "the archive rejects an incorrect password" ($LASTEXITCODE -ne 0)
   $dest2 = Join-Path $workDir "out_gui_made"
   Remove-Item -Recurse -Force $dest2 -ErrorAction SilentlyContinue
   $null = & $szExe x "-pGuiMadePw" $madeArc "-o$dest2" -y 2>&1
@@ -1871,7 +1921,7 @@ Set-ItemProperty -Path $regKey -Name "RememberMasterPassword" -Value 1 -Type DWo
 Set-ItemProperty -Path $regKey -Name "AutoLockMaster"         -Value 0 -Type DWord
 
 # 1. store one entry in a master-password vault
-$p = Start-Fm $archive
+$p = if($baselineFm){Start-Process -FilePath $baselineFm -ArgumentList "`"$archive`"" -PassThru}else{Start-Fm $archive}
 $dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (portable vault)"
 [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg, 3809))
 $ed = Expect-Dialog ([uint32]$p.Id) $T.NewPassword "new-password dialog appears (portable vault)"
@@ -2031,6 +2081,74 @@ if (Test-Path $exported) {
 }
 Check "process alive after the export / import round trip" (-not $p.HasExited)
 Stop-Fm $p
+if($baselineFm){
+  Write-Host "`n== 20b. review3 to review4 upgrade and isolated rollback ==" -ForegroundColor Cyan
+  $upgradeFailStart=$script:fail
+  $preUpgrade=Join-Path $workDir 'pre-upgrade-vault.dat'
+  $rollbackVault=Join-Path $workDir 'rollback-vault.dat'
+  if(-not(Test-Path -LiteralPath $moved -PathType Leaf)){throw 'Upgrade fixture missing the review3 vault'}
+  Copy-Item -LiteralPath $moved -Destination $preUpgrade -Force
+  $beforeHash=(Get-FileHash -LiteralPath $preUpgrade).Hash
+  Set-ItemProperty -Path $regKey -Name 'VaultPath' -Value $moved -Type String
+  $p=Start-Fm $archive
+  $unlock=Expect-Dialog ([uint32]$p.Id) $T.Master 'review4 asks to unlock the review3 vault' 15
+  if($unlock -ne [IntPtr]::Zero){
+    [VaultUiTest]::SetEditText((Wait-Child $unlock 123),$masterPw)
+    [VaultUiTest]::ClickButton((Wait-Child $unlock 1))
+  }
+  $dlg=Expect-Dialog ([uint32]$p.Id) $T.Password 'review4 opens the review3 vault' 15
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($dlg,3809))
+  $new=Expect-Dialog ([uint32]$p.Id) $T.NewPassword 'review4 opens new-password dialog after upgrade'
+  [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($new,121),'upgrade-only')
+  [VaultUiTest]::SetEditText([VaultUiTest]::FindDescendant($new,122),'UpgradeOnly#1')
+  Start-Sleep -Milliseconds 300
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($new,1))
+  $saveMaster=Wait-Dialog ([uint32]$p.Id) $T.Master 3
+  if($saveMaster -ne [IntPtr]::Zero){
+    [VaultUiTest]::SetEditText((Wait-Child $saveMaster 123),$masterPw)
+    [VaultUiTest]::ClickButton((Wait-Child $saveMaster 1))
+  }
+  Check 'review4 saved an upgraded ciphertext' ((Wait-File "$moved.bak" 10) -and ((Get-FileHash -LiteralPath $moved).Hash -ne $beforeHash))
+  Check 'review4 backup is exactly the encrypted pre-upgrade vault' ((Get-FileHash -LiteralPath "$moved.bak").Hash -eq $beforeHash)
+  Check 'review4 upgraded vault contains no plaintext' (-not(Test-BytesContain ([IO.File]::ReadAllBytes($moved)) ([Text.Encoding]::UTF8.GetBytes('UpgradeOnly#1'))))
+  Stop-Fm $p
+  $upgradedHash=(Get-FileHash -LiteralPath $moved).Hash
+  $p=Start-Fm $archive
+  $unlock=Expect-Dialog ([uint32]$p.Id) $T.Master 'review4 reopens the upgraded vault' 15
+  if($unlock -ne [IntPtr]::Zero){[VaultUiTest]::SetEditText((Wait-Child $unlock 123),$masterPw);[VaultUiTest]::ClickButton((Wait-Child $unlock 1))}
+  $dlg=Expect-Dialog ([uint32]$p.Id) $T.Password 'review4 opens upgraded vault after restart' 15
+  $lst=Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg,3808)) $T.List 'review4 lists upgraded entries'
+  $lv=Wait-Child $lst 124
+  Check 'review4 retained the old entry' ((Find-Row $lv 'portable') -ge 0)
+  $newRow=Find-Row $lv 'upgrade-only'
+  Check 'review4 retained the new entry' ($newRow -ge 0)
+  if($newRow -ge 0){
+    [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst,3829))
+    Check 'review4 retained the new password' ((Wait-ListText $lv $newRow 1 'UpgradeOnly#1') -eq 'UpgradeOnly#1')
+  }
+  Stop-Fm $p
+  Copy-Item -LiteralPath $preUpgrade -Destination $rollbackVault -Force
+  Check 'rollback uses a separate encrypted copy' ((Get-FileHash -LiteralPath $rollbackVault).Hash -eq $beforeHash)
+  Set-ItemProperty -Path $regKey -Name 'VaultPath' -Value $rollbackVault -Type String
+  $p=Start-Process -FilePath $baselineFm -ArgumentList "`"$archive`"" -PassThru
+  $unlock=Expect-Dialog ([uint32]$p.Id) $T.Master 'review3 asks to unlock the rollback copy' 15
+  if($unlock -ne [IntPtr]::Zero){[VaultUiTest]::SetEditText((Wait-Child $unlock 123),$masterPw);[VaultUiTest]::ClickButton((Wait-Child $unlock 1))}
+  $dlg=Expect-Dialog ([uint32]$p.Id) $T.Password 'review3 opens the encrypted rollback copy' 15
+  $lst=Open-List ([uint32]$p.Id) ([VaultUiTest]::FindDescendant($dlg,3808)) $T.List 'review3 lists the rollback copy'
+  $lv=Wait-Child $lst 124
+  $oldRow=Find-Row $lv 'portable'
+  Check 'review3 rollback retained the old entry' ($oldRow -ge 0)
+  if($oldRow -ge 0){
+    [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($lst,3829))
+    Check 'review3 rollback retained the old password' ((Wait-ListText $lv $oldRow 1 $portPw) -eq $portPw)
+  }
+  Check 'review3 rollback excludes the later entry' ((Find-Row $lv 'upgrade-only') -lt 0)
+  Check 'rollback did not overwrite the upgraded vault' ((Get-FileHash -LiteralPath $moved).Hash -eq $upgradedHash)
+  Stop-Fm $p
+  Ensure-UiRunDirectory
+  $upgradeResult=[ordered]@{result=if($script:fail -eq $upgradeFailStart){'passed'}else{'failed'};checkedUtc=[DateTime]::UtcNow.ToString('o');account=[Security.Principal.WindowsIdentity]::GetCurrent().Name;windowsBuild=[Environment]::OSVersion.Version.ToString();baselineFileManagerSha256=(Get-FileHash -LiteralPath $baselineFm).Hash;fileManagerSha256=(Get-FileHash -LiteralPath $fmExe).Hash;guiSha256=(Get-FileHash -LiteralPath $guiExe).Hash;preUpgradeVaultSha256=$beforeHash;upgradedVaultSha256=$upgradedHash;backupSha256=(Get-FileHash -LiteralPath "$moved.bak").Hash;rollbackVaultSha256=(Get-FileHash -LiteralPath $rollbackVault).Hash;assertionsPassed=$script:pass;assertionsFailed=$script:fail-$upgradeFailStart;note='review3 EXE ran with test-only MinGW DLLs; rollback used a separate encrypted pre-upgrade copy and did not overwrite the upgraded vault'}
+  $upgradeResult|ConvertTo-Json -Depth 4|Set-Content -LiteralPath (Join-Path $script:uiRunDirectory 'upgrade-rollback-result.json') -Encoding UTF8
+}
 Set-ItemProperty -Path $regKey -Name "UseMasterPassword"      -Value 0 -Type DWord
 Set-ItemProperty -Path $regKey -Name "RememberMasterPassword" -Value 0 -Type DWord
 # ---------------------------------------------------------------- test 21
@@ -2042,7 +2160,16 @@ Write-Host "`n== 21. the vault location may be a folder ==" -ForegroundColor Cya
 # OK applies the page AND closes the options dialog, and moving the vault raises a
 # question about the file that was left behind, so both are handled here.
 function Open-PasswordPage([uint32]$procId, [string]$name) {
-  $fm = [VaultUiTest]::FindDialogClass($procId, "7-Zip::FM")
+  # Start-Process returns before 7zFM has created its main window. Posting WM_COMMAND
+  # to a zero handle silently loses the request, which made this late portable check
+  # fail intermittently even though the same page passed earlier in the run.
+  $deadline = (Get-Date).AddSeconds(12)
+  $fm = [IntPtr]::Zero
+  while ($fm -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline) {
+    $fm = [VaultUiTest]::FindDialogClass($procId, "7-Zip::FM")
+    if ($fm -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
+  }
+  if ($fm -eq [IntPtr]::Zero) { throw "7zFM main window did not appear for $name (PID $procId)" }
   [void][VaultUiTest]::PostMessageW($fm, 0x0111, [IntPtr]900, [IntPtr]::Zero)
   $opt = Expect-Dialog $procId $T.Options $name 12
   $tab = [VaultUiTest]::FindDescendant($opt, 12320)
@@ -2095,10 +2222,13 @@ Check "the settings page has the vault path box (folder test)" ($page.Edit -ne [
 Check "the page opens on the configured vault file" ([VaultUiTest]::GetEditText($page.Edit) -eq $vault) "(got [$([VaultUiTest]::GetEditText($page.Edit))])"
 
 # 1. a folder instead of a file
+$originalVaultHash = (Get-FileHash -LiteralPath $vault -Algorithm SHA256).Hash
 $result = Apply-VaultPath ([uint32]$p.Id) $page $vaultFolder "the folder path is applied"
-Check "the vault move asked about the file left behind" ($result -eq "asked") "(result=$result)"
+Check "copying the vault does not ask to delete the recovery source" ($result -eq "clean") "(result=$result)"
 Check "the vault file was created inside the folder" (Wait-File $inFolder 8) "(expected $inFolder)"
-Check "answering yes deleted the old vault file" (-not (Test-Path $vault)) "(still there: $vault)"
+Check "the original encrypted vault remains unchanged" (
+  (Test-Path -LiteralPath $vault) -and
+  ((Get-FileHash -LiteralPath $vault -Algorithm SHA256).Hash -eq $originalVaultHash))
 $stored = (Get-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue).VaultPath
 Check "the setting points at the file inside the folder" ($stored -eq $inFolder) "(got [$stored])"
 Check "process alive after applying a folder" (-not $p.HasExited)
@@ -2114,16 +2244,34 @@ $stored = (Get-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction Silentl
 Check "the quoted path resolved to the same file" ($stored -eq $inFolder) "(got [$stored])"
 Check "process alive after the quoted path" (-not $p.HasExited)
 
-# 4. and the vault really moves: to a file elsewhere and back into the folder
+# 4. copy to another file, retaining each previous encrypted generation.
 $page = Open-PasswordPage ([uint32]$p.Id) "options dialog reopens (move away)"
+$folderVaultHash = (Get-FileHash -LiteralPath $inFolder -Algorithm SHA256).Hash
 $result = Apply-VaultPath ([uint32]$p.Id) $page $elsewhere "the vault moves to another file"
-Check "moving to another file asked about the old file too" ($result -eq "asked") "(result=$result)"
+Check "copying to another file does not ask to delete the recovery source" ($result -eq "clean") "(result=$result)"
 Check "the vault really moved to that file" (Wait-File $elsewhere 8) "(expected $elsewhere)"
-Check "the file in the folder was deleted" (-not (Test-Path $inFolder)) "(still there: $inFolder)"
+Check "the encrypted folder copy remains unchanged" (
+  (Test-Path -LiteralPath $inFolder) -and
+  ((Get-FileHash -LiteralPath $inFolder -Algorithm SHA256).Hash -eq $folderVaultHash))
+# The previous destination is deliberately retained by the product. Remove only this
+# test-owned copy so the return path is free; overwriting an existing destination is refused.
+if (-not [string]::Equals((Split-Path -Parent $inFolder), $vaultFolder, [StringComparison]::OrdinalIgnoreCase) -or
+    -not [string]::Equals((Split-Path -Leaf $inFolder), '7zPasswordVault.dat', [StringComparison]::OrdinalIgnoreCase) -or
+    -not (Test-Path -LiteralPath $inFolder -PathType Leaf) -or
+    ((Get-Item -LiteralPath $inFolder -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+    ((Get-FileHash -LiteralPath $inFolder -Algorithm SHA256).Hash -ne $folderVaultHash)) {
+  throw "Refusing to remove a vault file not verified as this test's encrypted folder copy: $inFolder"
+}
+Remove-Item -LiteralPath $inFolder -Force -ErrorAction Stop
 $page = Open-PasswordPage ([uint32]$p.Id) "options dialog reopens (move back)"
+$elsewhereHash = (Get-FileHash -LiteralPath $elsewhere -Algorithm SHA256).Hash
 $result = Apply-VaultPath ([uint32]$p.Id) $page $vaultFolder "the vault moves back into the folder"
-Check "moving back into the folder worked" (Wait-File $inFolder 8) "(expected $inFolder)"
-Check "the other file was deleted again" (-not (Test-Path $elsewhere)) "(still there: $elsewhere)"
+Check "copying back into the folder worked" (
+  ($result -eq "clean") -and (Wait-File $inFolder 8) -and
+  ((Get-ItemProperty -Path $regKey -Name VaultPath -ErrorAction SilentlyContinue).VaultPath -eq $inFolder))
+Check "the encrypted file at the previous path remains unchanged" (
+  (Test-Path -LiteralPath $elsewhere) -and
+  ((Get-FileHash -LiteralPath $elsewhere -Algorithm SHA256).Hash -eq $elsewhereHash))
 
 # 5. the Browse button opens the folder picker and can be closed again
 $page = Open-PasswordPage ([uint32]$p.Id) "options dialog reopens (browse button)"
@@ -2237,11 +2385,68 @@ if ((Test-Path $vault) -and (Get-Item $vault).Length -gt 16) {
 Write-Host "`n== 24a. two default vaults: ask once, then remember ==" -ForegroundColor Cyan
 # Both default locations hold a vault next to the program and in %APPDATA%\7-Zip and no
 # location is recorded: the program has to ask, because guessing would show an empty list
-# while the real entries sit in the other file. The real vault is never written - only its
-# existence matters - and the recorded choice is undone by the isolation restore.
+# while the real entries sit in the other file. An existing user vault is never written;
+# a missing one gets a temporary encrypted fixture removed in the inner finally block.
+# Test 23 deliberately damaged the working vault. Make a fresh encrypted fixture before
+# copying it to either default location.
+Set-ItemProperty -Path $regKey -Name "VaultPath" -Value $vault -Type String
+Set-ItemProperty -Path $regKey -Name "UseMasterPassword" -Value 0 -Type DWord
+Remove-Item -LiteralPath $vault,$vaultTmp,"$vault.bak" -Force -ErrorAction SilentlyContinue
+$p = Start-Fm $archive
+$dlg = Expect-Dialog ([uint32]$p.Id) $T.Password "password dialog appears (two-default fixture)"
+New-VaultEntry ([uint32]$p.Id) $dlg "two-default-fixture" "FixturePw-24" "encrypted two-default fixture is created"
+Stop-Fm $p
+$fixtureReady = Test-Path -LiteralPath $vault -PathType Leaf
+if ($fixtureReady) {
+  $fixtureBytes = [IO.File]::ReadAllBytes($vault)
+  $fixtureReady = $fixtureBytes.Length -ge 6 -and $fixtureBytes[4] -eq 4 -and $fixtureBytes[5] -eq 0
+}
+Check "the two-default fixture is an encrypted DPAPI v4 vault" $fixtureReady
+if (-not $fixtureReady) { throw 'Could not prepare the encrypted two-default fixture.' }
 $realRoaming = Join-Path (Join-Path $env:APPDATA "7-Zip") "7zPasswordVault.dat"
 $portableVault = Join-Path $SevenZipDir "7zPasswordVault.dat"
-$portableBefore = Test-Path -LiteralPath $portableVault
+$createdRoamingFixture = $false
+$roamingFixtureHash = $null
+function New-ExclusiveEncryptedFixture([string]$destination, [byte[]]$bytes) {
+  $parent = Split-Path -Parent $destination
+  [void][IO.Directory]::CreateDirectory($parent)
+  if ((Get-Item -LiteralPath $parent -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+    throw "Refusing to create a vault fixture below a reparse point: $parent"
+  }
+  if (Get-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue) {
+    throw "Refusing to replace an existing vault fixture destination: $destination"
+  }
+  $temp = Join-Path $parent ('.7zpw-ui-' + [guid]::NewGuid().ToString('N') + '.tmp')
+  try {
+    [IO.File]::WriteAllBytes($temp, $bytes)
+    # File.Move with overwrite=false refuses a destination created in the meantime.
+    [IO.File]::Move($temp, $destination, $false)
+  } finally {
+    if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction Stop }
+  }
+}
+function Remove-UnchangedEncryptedFixture([string]$path, [string]$expectedHash) {
+  $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+  if (-not $item -or $item.PSIsContainer -or
+      ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+      ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $expectedHash)) {
+    Write-Host "  Refusing to remove changed or missing encrypted fixture: $path" -ForegroundColor Yellow
+    return $false
+  }
+  Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+  return (-not (Test-Path -LiteralPath $path))
+}
+try {
+if (-not (Get-Item -LiteralPath $realRoaming -Force -ErrorAction SilentlyContinue)) {
+  New-ExclusiveEncryptedFixture $realRoaming $fixtureBytes
+  $createdRoamingFixture = $true
+  $roamingFixtureHash = (Get-FileHash -LiteralPath $realRoaming -Algorithm SHA256).Hash
+}
+$roamingItem = Get-Item -LiteralPath $realRoaming -Force -ErrorAction Stop
+if (($roamingItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $roamingItem.PSIsContainer) {
+  throw "Refusing to use a linked or directory vault as the roaming test fixture: $realRoaming"
+}
+$portableBefore = [bool](Get-Item -LiteralPath $portableVault -Force -ErrorAction SilentlyContinue)
 if (-not (Test-Path -LiteralPath $realRoaming)) {
   Check "a vault in %APPDATA% is needed for this test" $false "(no $realRoaming)"
 } elseif ($portableBefore) {
@@ -2249,7 +2454,8 @@ if (-not (Test-Path -LiteralPath $realRoaming)) {
 } else {
   Remove-ItemProperty -Path $regKey -Name "VaultPath" -ErrorAction SilentlyContinue
   # a valid vault of this run (readable through DPAPI), not the user's file
-  Copy-Item -LiteralPath $vault -Destination $portableVault -Force
+  New-ExclusiveEncryptedFixture $portableVault $fixtureBytes
+  $portableFixtureHash = (Get-FileHash -LiteralPath $portableVault -Algorithm SHA256).Hash
   try {
     Check "both default vault files exist now" ((Test-Path -LiteralPath $portableVault) -and (Test-Path -LiteralPath $realRoaming))
 
@@ -2282,7 +2488,7 @@ if (-not (Test-Path -LiteralPath $realRoaming)) {
   } finally {
     # the copy must not survive, whatever happens above: it is a vault file inside the
     # folder that gets packaged
-    Remove-Item -LiteralPath $portableVault -Force -ErrorAction SilentlyContinue
+    Check "the portable fixture is removed only when unchanged" (Remove-UnchangedEncryptedFixture $portableVault $portableFixtureHash)
   }
   Check "the portable test vault was removed again" (-not (Test-Path -LiteralPath $portableVault))
 }
@@ -2299,7 +2505,8 @@ if ((-not (Test-Path -LiteralPath $realRoaming)) -or (Test-Path -LiteralPath $po
   Check "the second question test has a free program folder and a vault in %APPDATA%" $false `
     "(roaming=$(Test-Path -LiteralPath $realRoaming) portable=$(Test-Path -LiteralPath $portableVault))"
 } else {
-  Copy-Item -LiteralPath $vault -Destination $portableVault -Force
+  New-ExclusiveEncryptedFixture $portableVault $fixtureBytes
+  $portableFixtureHash = (Get-FileHash -LiteralPath $portableVault -Algorithm SHA256).Hash
   $roamingHashBefore = (Get-FileHash -LiteralPath $realRoaming -Algorithm SHA256).Hash
   $portableHashBefore = (Get-FileHash -LiteralPath $portableVault -Algorithm SHA256).Hash
   try {
@@ -2347,7 +2554,7 @@ if ((-not (Test-Path -LiteralPath $realRoaming)) -or (Test-Path -LiteralPath $po
     Check "both vault files are unchanged after everything (%APPDATA%)" `
       ((Get-FileHash -LiteralPath $realRoaming -Algorithm SHA256).Hash -eq $roamingHashBefore)
   } finally {
-    Remove-Item -LiteralPath $portableVault -Force -ErrorAction SilentlyContinue
+    Check "the second portable fixture is removed only when unchanged" (Remove-UnchangedEncryptedFixture $portableVault $portableFixtureHash)
     Set-ItemProperty -Path $regKey -Name "VaultPath" -Value $vault -Type String
   }
 
@@ -2366,6 +2573,20 @@ if ((-not (Test-Path -LiteralPath $realRoaming)) -or (Test-Path -LiteralPath $po
   if ($ask -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $ask $T.Caption) }
   Check "process alive after the known-password test" (-not $p.HasExited)
   Stop-Fm $p
+}
+} finally {
+  if ($createdRoamingFixture) {
+    $roamingFinalItem = Get-Item -LiteralPath $realRoaming -Force -ErrorAction SilentlyContinue
+    $sameFixture = $roamingFinalItem -and (-not $roamingFinalItem.PSIsContainer) -and
+      (-not ($roamingFinalItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) -and
+      ((Get-FileHash -LiteralPath $realRoaming -Algorithm SHA256).Hash -eq $roamingFixtureHash)
+    Check "temporary roaming fixture remained encrypted and unchanged" $sameFixture
+    if ($sameFixture) {
+      Check "temporary roaming fixture was removed" (Remove-UnchangedEncryptedFixture $realRoaming $roamingFixtureHash)
+    } else {
+      Write-Host "  The roaming fixture changed; retained for inspection: $realRoaming" -ForegroundColor Yellow
+    }
+  }
 }
 
 # ---------------------------------------------------------------- test 24
@@ -2430,6 +2651,28 @@ if (Test-Path $out) {
   Check "the extracted content is right" (((Get-Content $out -Raw).Trim()) -eq "secret content")
 }
 Check "7zG finished (proof)" ($g.HasExited)
+# Legacy setup cases apply only to packages that contain an actual uninstall command.
+# The current review3 ZIP is portable and has no registration action.
+function Get-ShortcutState([string]$path) {
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return '<absent>' }
+  return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+}
+function Get-UninstallState([string]$path) {
+  if (-not (Test-Path -LiteralPath $path)) { return '<absent>' }
+  $values = (Get-ItemProperty -LiteralPath $path).PSObject.Properties |
+    Where-Object { $_.Name -notlike 'PS*' } |
+    Sort-Object Name |
+    ForEach-Object { [pscustomobject]@{ Name = $_.Name; Value = $_.Value } }
+  return 'present:' + (ConvertTo-Json -InputObject @($values) -Depth 5 -Compress)
+}
+$deskShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "7-Zip Password Vault.lnk"
+$startShortcut = Join-Path (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs") "7-Zip Password Vault.lnk"
+$uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\7ZipPasswordVault"
+$deskBefore = Get-ShortcutState $deskShortcut
+$startBefore = Get-ShortcutState $startShortcut
+$uninstallBefore = Get-UninstallState $uninstallKey
+if (Test-Path -LiteralPath (Join-Path $SevenZipDir 'uninstall.cmd') -PathType Leaf) {
+try {
 # ---------------------------------------------------------------- test 26
 Write-Host "`n== 26. first start: the shortcuts question is asked once ==" -ForegroundColor Cyan
 # The self-extracting package cannot run anything after unpacking (the 7z.sfx stub ignores
@@ -2579,13 +2822,41 @@ if ((Test-Path -LiteralPath $deskShortcut) -or (Test-Path -LiteralPath $startSho
   Remove-Item -Recurse -Force $sibling -ErrorAction SilentlyContinue
 }
 
-# the shortcuts and the entry this test created are removed again, whatever happened above
-Remove-Item -LiteralPath $deskShortcut -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $startShortcut -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
-Check "the test cleaned up its shortcuts" ((-not (Test-Path -LiteralPath $deskShortcut)) -and (-not (Test-Path -LiteralPath $startShortcut)))
+} finally {
+  # Remove only names absent before this run. Pre-existing user registration belongs
+  # to the user even when a legacy test could not execute its registration scenario.
+  if ($deskBefore -eq '<absent>') { Remove-Item -LiteralPath $deskShortcut -Force -ErrorAction SilentlyContinue }
+  if ($startBefore -eq '<absent>') { Remove-Item -LiteralPath $startShortcut -Force -ErrorAction SilentlyContinue }
+  if ($uninstallBefore -eq '<absent>') { Remove-Item -LiteralPath $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue }
+  Check "the legacy test preserved existing shortcut and uninstall state" (
+    ((Get-ShortcutState $deskShortcut) -eq $deskBefore) -and
+    ((Get-ShortcutState $startShortcut) -eq $startBefore) -and
+    ((Get-UninstallState $uninstallKey) -eq $uninstallBefore))
+}
+} else {
+  Write-Host "`n== 26. portable release has no setup registration ==" -ForegroundColor Cyan
+  $p = Start-Fm ""
+  $setupQuestion = Wait-Dialog ([uint32]$p.Id) $T.Caption 5
+  Check "portable release opens without a shortcut setup question" ($setupQuestion -eq [IntPtr]::Zero)
+  if ($setupQuestion -ne [IntPtr]::Zero) { [void](Close-Box ([uint32]$p.Id) $setupQuestion $T.Caption) }
+  Stop-Fm $p
+
+  $p = Start-Fm ""
+  $page = Open-PasswordPage ([uint32]$p.Id) "portable settings page opens"
+  Check "portable settings page has no registration button" (
+    [VaultUiTest]::FindDescendant($page.Opt, 2616) -eq [IntPtr]::Zero)
+  [VaultUiTest]::ClickButton([VaultUiTest]::FindDescendant($page.Opt, 2))
+  Stop-Fm $p
+  Check "portable run left the desktop shortcut unchanged" ((Get-ShortcutState $deskShortcut) -eq $deskBefore)
+  Check "portable run left the Start Menu shortcut unchanged" ((Get-ShortcutState $startShortcut) -eq $startBefore)
+  Check "portable run left the uninstall entry unchanged" ((Get-UninstallState $uninstallKey) -eq $uninstallBefore)
+}
 
 if (-not $g.HasExited) { Stop-Process -Id $g.Id -Force }
+} catch {
+  $script:uiAbortMessage = $_.Exception.Message
+  if ($script:fail -eq 0) { Check 'GUI run aborted' $false $script:uiAbortMessage }
+  Write-Host "  GUI run aborted: $script:uiAbortMessage" -ForegroundColor Red
 } finally {
   Stop-Fm $null
   Clear-OwnInstances
@@ -2603,4 +2874,27 @@ if (-not $g.HasExited) { Stop-Process -Id $g.Id -Force }
 Write-Host "`n== summary ==" -ForegroundColor Cyan
 Write-Host ("  passed: {0}   failed: {1}" -f $script:pass, $script:fail) -ForegroundColor $(if ($script:fail -eq 0) { "Green" } else { "Red" })
 Write-Host ("  real vault untouched: {0}" -f $realVault) -ForegroundColor DarkGray
+if ($KeepArtifacts -or $script:fail -ne 0) {
+  try {
+    Ensure-UiRunDirectory
+    $uiResult = [ordered]@{
+      classification = if ($script:fail -eq 0) { 'PASS' } else { 'FAIL' }
+      exitCode = if ($script:fail -eq 0) { 0 } else { 1 }
+      passed = $script:pass
+      failed = $script:fail
+      failedChecks = $script:uiFailedChecks.ToArray()
+      abortMessage = $script:uiAbortMessage
+      startedUtc = $script:uiStartedUtc
+      finishedUtc = [DateTime]::UtcNow.ToString('o')
+      scriptSha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
+      runtimeDirectory = $SevenZipDir
+      fileManagerSha256 = (Get-FileHash -LiteralPath $fmExe -Algorithm SHA256).Hash
+      guiSha256 = (Get-FileHash -LiteralPath $guiExe -Algorithm SHA256).Hash
+    }
+    $uiResult | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $script:uiRunDirectory 'result.json') -Encoding UTF8
+    Write-Host "  GUI evidence: $script:uiRunDirectory" -ForegroundColor DarkGray
+  } catch {
+    Write-Host "  Could not retain GUI summary: $($_.Exception.Message)" -ForegroundColor Yellow
+  }
+}
 exit $(if ($script:fail -eq 0) { 0 } else { 1 })

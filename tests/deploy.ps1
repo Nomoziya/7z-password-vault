@@ -1,59 +1,51 @@
-# Deploy the freshly built binaries and language files into the distribution folder.
-$ErrorActionPreference = "Stop"
-$root = "D:\DSH Work\7z-passward"
-$dist = Join-Path $root "7-Zip-密码管家版"
-
-# A vault file in the build output is a test leftover - and if it ever held real entries
-# it would be published with the package. Stop here instead of shipping it.
-$strayVaults = @(Get-ChildItem -LiteralPath $dist -Filter "*.dat" -File -ErrorAction SilentlyContinue)
-if ($strayVaults.Count -gt 0) {
-  foreach ($v in $strayVaults) { Write-Host ("  stray vault in the output folder: {0} ({1} bytes)" -f $v.FullName, $v.Length) -ForegroundColor Yellow }
-  throw "delete the .dat file(s) in '$dist' first - a vault must not be shipped"
+param([string]$PackageDir='', [string]$SeedDir='', [string]$FileManagerExe='', [string]$GuiExe='')
+$ErrorActionPreference='Stop'
+$root=Split-Path $PSScriptRoot -Parent
+. (Join-Path $PSScriptRoot 'release-policy.ps1')
+. (Join-Path $PSScriptRoot 'runtime-input.ps1')
+$SeedDir=Resolve-TestRuntime -Directory $SeedDir
+if(-not $PackageDir){$PackageDir=Join-Path $root ('dist\candidate-'+[guid]::NewGuid().ToString('N'))}
+$package=[IO.Path]::GetFullPath($PackageDir)
+if(Test-Path -LiteralPath $package){throw 'Candidate destination must be new and empty; existing data is never replaced.'}
+$seed=(Resolve-Path -LiteralPath $SeedDir).Path.TrimEnd('\')
+$inputs=Get-Content (Join-Path $root 'installer\release-inputs.json') -Raw | ConvertFrom-Json
+[void](Test-ReleaseManifest $seed)
+foreach($inputFile in $inputs.runtime){
+  if((Get-FileHash -LiteralPath (Join-Path $seed $inputFile.file)).Hash -ne $inputFile.sha256){throw "pinned input hash mismatch: $($inputFile.file)"}
 }
-
-$copies = @(
-  @{ src = "CPP\7zip\UI\FileManager\b\g\7zFM.exe"; dst = "7zFM.exe" },
-  @{ src = "CPP\7zip\UI\GUI\b\g\7zG.exe";           dst = "7zG.exe" },
-  @{ src = "Lang\en.txt";                           dst = "Lang\en.txt" },
-  @{ src = "Lang\en.ttt";                           dst = "Lang\en.ttt" },
-  @{ src = "Lang\zh-cn.txt";                        dst = "Lang\zh-cn.txt" },
-  @{ src = "Lang\zh-tw.txt";                        dst = "Lang\zh-tw.txt" },
-  @{ src = "README.md";                             dst = "README.md" },
-  @{ src = "BUILD.md";                              dst = "BUILD.md" },
-  @{ src = "tools\uninstall.ps1";                   dst = "uninstall.ps1" },
-  @{ src = "tools\uninstall.cmd";                   dst = "uninstall.cmd" },
-  # The portable package is the only published download now, so the manual entry point for
-  # the shortcuts / "Apps & features" registration travels with it (the program also offers
-  # the same thing on its first start).
-  @{ src = "installer\install.cmd";                 dst = "install.cmd" },
-  @{ src = "installer\install.ps1";                 dst = "install.ps1" }
-)
-foreach ($c in $copies) {
-  $from = Join-Path $root $c.src
-  $to   = Join-Path $dist $c.dst
-  if (-not (Test-Path $from)) { throw "missing build output: $from" }
-  Copy-Item -LiteralPath $from -Destination $to -Force
-  Write-Host ("  {0,-10} -> {1}" -f $c.dst, (Get-Item $to).LastWriteTime)
-}
-# A hash list ships with the package: it is what can be checked after a download and
-# what the uninstaller can use to tell our files from someone else's.
-$manifest = Join-Path $dist "SHA256SUMS.txt"
-$lines = New-Object System.Collections.Generic.List[string]
-$lines.Add("# 7-Zip Password Vault 26.03 - SHA-256 of every file in this package")
-Get-ChildItem -LiteralPath $dist -Recurse -File |
-  Where-Object { $_.Name -ne "SHA256SUMS.txt" } |
-  Sort-Object FullName |
-  ForEach-Object {
-    $rel = $_.FullName.Substring($dist.Length + 1)
-    $lines.Add(("{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower(), $rel))
+if((Get-FileHash -LiteralPath (Join-Path $root $inputs.sourceArchive.file)).Hash -ne $inputs.sourceArchive.sha256){throw 'pinned upstream source archive hash mismatch'}
+if(-not $FileManagerExe){$FileManagerExe=Join-Path $root 'CPP\7zip\UI\FileManager\b\g\7zFM.exe'}
+if(-not $GuiExe){$GuiExe=Join-Path $root 'CPP\7zip\UI\GUI\b\g\7zG.exe'}
+$FileManagerExe=(Resolve-Path -LiteralPath $FileManagerExe -ErrorAction Stop).Path
+$GuiExe=(Resolve-Path -LiteralPath $GuiExe -ErrorAction Stop).Path
+# The current portable policy carries no MinGW DLLs. Refuse binaries that would
+# start only on machines with the compiler directory on PATH.
+function Assert-NoMissingToolchainRuntime([string]$exe) {
+  $objdump=(Get-Command objdump -ErrorAction Stop).Source
+  $imports=@(& $objdump -p $exe | Select-String 'DLL Name:')
+  if($LASTEXITCODE -ne 0 -or $imports.Count -eq 0){throw "Could not inspect PE imports: $exe"}
+  if($imports -match 'DLL Name:\s*(libgcc_s_seh-1|libstdc\+\+-6|libwinpthread-1)\.dll'){
+    throw "GUI executable requires unpackaged MinGW runtime DLLs: $exe"
   }
-# BOM: Windows PowerShell 5.1 reads a UTF-8 file without a BOM as ANSI, and the
-# package paths contain non-ASCII names (the folder itself is 7-Zip-密码管家版).
-[IO.File]::WriteAllLines($manifest, $lines, (New-Object System.Text.UTF8Encoding($true)))
-Write-Host ("  SHA256SUMS.txt written ({0} files)" -f ($lines.Count - 1))
-
-Write-Host "`nSHA-256:"
-foreach ($exe in "7zFM.exe","7zG.exe") {
-  $p = Join-Path $dist $exe
-  "{0}  {1}" -f (Get-FileHash $p -Algorithm SHA256).Hash.ToLower(), $exe
 }
+Assert-NoMissingToolchainRuntime $FileManagerExe
+Assert-NoMissingToolchainRuntime $GuiExe
+$copies=@{
+ $FileManagerExe='7zFM.exe';$GuiExe='7zG.exe';
+ 'README.md'='README.md';'BUILD.md'='BUILD.md';'Lang\en.txt'='Lang\en.txt';'Lang\zh-cn.txt'='Lang\zh-cn.txt';'Lang\zh-tw.txt'='Lang\zh-tw.txt'
+}
+foreach($source in $copies.Keys){
+  $path=if([IO.Path]::IsPathRooted($source)){$source}else{Join-Path $root $source}
+  if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Required build input missing: $source. Build both executables before deployment."}
+}
+New-Item -ItemType Directory -Path (Join-Path $package 'Lang') -Force | Out-Null
+foreach($inputFile in $inputs.runtime){Copy-Item -LiteralPath (Join-Path $seed $inputFile.file) -Destination (Join-Path $package $inputFile.file)}
+foreach($source in $copies.Keys){
+  $path=if([IO.Path]::IsPathRooted($source)){$source}else{Join-Path $root $source}
+  Copy-Item -LiteralPath $path -Destination (Join-Path $package $copies[$source])
+}
+Assert-ReleaseTree $package
+Write-ReleaseManifest $package
+[void](Test-ReleaseManifest $package)
+Write-Host "New candidate assembled and verified: $package"
+Write-Output $package

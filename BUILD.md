@@ -1,318 +1,97 @@
-# Build, verify and sign / 构建、验证与签名
+# 构建、验证与发布
 
-This document exists so that the binaries in the release package can be **verified
-instead of trusted**: it records exactly how they are produced, what is inside
-them, and why an antivirus may complain about a file that is not malicious.
+当前 review4 整改版仅供受控内测。公开发布条件未全部完成；项目长期采用未签名 portable ZIP。
 
-本文档的目的：让发布包里的二进制可以被**验证**，而不是只能被信任。它记录了这些
-二进制的产出方式、内部构成，以及为什么杀毒软件可能对它们误报。
+未签名发布策略见 [docs/signing-options.md](docs/signing-options.md)。不将自签名或独立哈希称为发布者身份验证；Defender 复核未做时如实标记。
 
----
+## 构建
 
-## 1. What the package contains / 包内是什么
+源码基线为仓库内 7-Zip 26.03。`installer/release-inputs.json` 固定源码归档与运行时输入的 SHA-256。上游 3 个官方资产摘要和 8 个运行时文件已核验，证据见 [上游来源记录](docs/upstream-provenance-20260923.md)。这只证明上游输入来源，不证明项目 GUI EXE 可由当前源码复现或发布者身份。
 
-`7zFM.exe` and `7zG.exe` are built from the **official 7-Zip 26.03 source** plus the
-patch set in this repository. Everything else in the package (`7z.exe`, `7z.dll`,
-`7-zip.dll`, `Codecs/`, `Formats/`, `Lang/*.txt`, `7-zip.chm`) is copied unchanged
-from an official 7-Zip installation.
-
-`7zFM.exe` 与 `7zG.exe` 由**官方 7-Zip 26.03 源码**加本仓库的补丁构建；包内其余文件
-（`7z.exe`、`7z.dll`、`7-zip.dll`、`Codecs/`、`Formats/`、`Lang/*.txt`、`7-zip.chm`）
-均直接取自官方 7-Zip 安装，未做修改。
-
-The complete change against the official source:
-
-```bat
-git diff --stat <first-commit>..HEAD
-::  26 files changed, ~2961 insertions(+), ~307 deletions(-)
-```
-
-New files are `PasswordVault.*`, `PasswordListDialog.*`, `PasswordPage.*`,
-`PasswordVaultUi.*` and `tests/ui-test.ps1`; the rest are edits to existing files
-(see the table at the end of `README.md`).
-
----
-
-## 2. Reproduce the build / 复现构建
-
-Toolchain used: **MinGW-w64 GCC 16.2.0, msvcrt flavour**
-(`x86_64-16.2.0-release-posix-seh-msvcrt-rt_v14-rev1`).
-
-The **msvcrt** flavour matters, and not only for antivirus heuristics:
-
-* The UCRT flavour links `api-ms-win-crt-private-l1-1-0.dll`, an undocumented
-  private API set. It is a known antivirus false-positive trigger, and it does not
-  exist on Windows 7/8, so UCRT builds need Windows 10 or later.
-* Official 7-Zip links plain `msvcrt.dll`. Building with the msvcrt flavour makes
-  this build's imports match the official ones (14 DLLs instead of 23) and keeps
-  the older Windows versions supported.
-
-Get it from <https://github.com/niXman/mingw-builds-binaries/releases> and verify
-the published SHA-256 before extracting. `make` is not part of that package, so a
-separate `make` (e.g. from another MinGW install) has to stay on `PATH`; put the
-msvcrt `bin` **first** so `gcc`/`g++` resolve to it. The extracted toolchain is
-about 750 MB (plus the ~103 MB installer archive, which can be deleted afterwards).
-
-```bat
-:: the object directories must exist first: the makefile only creates them
-:: inside an MSYS shell
-mkdir CPP\7zip\UI\GUI\b\g 2>nul
-mkdir CPP\7zip\UI\FileManager\b\g 2>nul
-
-cd CPP\7zip\UI\GUI
-make -f ../../cmpl_gcc.mak
-
-cd ..\FileManager
-make -f ../../cmpl_gcc.mak
-```
-
-Outputs: `CPP\7zip\UI\GUI\b\g\7zG.exe` and `CPP\7zip\UI\FileManager\b\g\7zFM.exe`.
-
-Copying the result into the package (binaries, the four language files and the
-documents) is one command:
+当前环境使用 MinGW-w64 GCC 16.2.0。编译日志及最终构建记录用于记录真实工具链，不能依据文件名推断工具链 ABI 或安全信誉。请在 x64 Windows 标准用户环境运行：
 
 ```powershell
-pwsh -NoProfile -File tests\deploy.ps1      # prints the SHA-256 of both binaries
+# 从仓库根目录开始。每条命令成功后再继续。
+New-Item -ItemType Directory -Force CPP/7zip/UI/FileManager/b/g, CPP/7zip/UI/GUI/b/g
+Push-Location CPP/7zip/UI/FileManager
+make -f ../../cmpl_gcc.mak -j4
+Pop-Location
+Push-Location CPP/7zip/UI/GUI
+make -f ../../cmpl_gcc.mak -j4
+Pop-Location
+pwsh -NoProfile -File tests/password-vault-security-test.ps1
+pwsh -NoProfile -File tests/release-gate-test.ps1
 ```
 
-A hash match only means "the same source and the same toolchain". A different GCC
-version produces a different hash, so **reproduce the build and compare behaviour**
-rather than expecting an identical file.
+两个 GUI 目标使用 `-static` 链接 MinGW 运行库。组装候选包时 `tests/deploy.ps1` 会检查 PE 导入表，拒绝仍依赖未打包的 `libgcc_s_seh-1.dll`、`libstdc++-6.dll` 或 `libwinpthread-1.dll` 的 EXE；因此标准用户机器不必安装编译器或修改 `PATH`。
 
-哈希一致只说明「同一份源码 + 同一套工具链」。换一个 GCC 版本就会得到不同的哈希，
-所以更可靠的做法是**自己构建一遍**，而不是只比对哈希。
+原生安全测试编译并运行生产密码库代码，使用测试专属临时库和设置适配器，不读写用户真实密码库或注册表。涵盖 DPAPI、主密码、错误密码、取消、并发保存、篡改/损坏、故障注入和崩溃恢复。磁盘满/替换权限拒绝属于 API 故障注入，不能替代真实磁盘/ACL/断电和 GUI 验收。
 
----
+测试包含独立真实 DPAPI 探针。若探针与生产加密同时失败，将报告准确 API/错误码及保存阶段，退出码为 78，分类 `ENVIRONMENT_BLOCKED`，绝不计为通过；DPAPI 前置条件正常但断言失败分类 `TEST_FAILURE`。符号链接夹具也必须实际创建成功，不能跳过。应在同一 Windows 普通用户环境重跑原脚本；隔离环境结果与普通用户结果分开保存。每次运行的日志和 JSON 分类记录位于 `tests/b/native-result-*.log*`。
 
-## 3. What the binaries do with your data / 二进制对你的数据做了什么
-
-* They read and write one file: the vault
-  (`%APPDATA%\7-Zip\7zPasswordVault.dat`, or the path set in the options).
-* DPAPI mode encrypts every name and password with `CryptProtectData` (tied to your
-  Windows account) — see `PasswordVault.cpp`.
-* Master-password mode uses AES-256-GCM with a key from PBKDF2-HMAC-SHA256
-  (200 000 iterations, fresh random salt and fresh 12-byte nonce on **every** save).
-* There is **no network code**: the binaries do not import `ws2_32`, `wininet`,
-  `winhttp` or `urlmon`, and import no socket / DNS / HTTP symbol at all
-  (`WSAStartup`, `socket`, `getaddrinfo`, `InternetOpen*`, `WinHttp*`,
-  `URLDownloadToFile*` — all zero).
-* `7zFM.exe` imports `ShellExecuteW` / `ShellExecuteExW` from `SHELL32`, exactly like
-  the official file manager: that is how **Open** (and the help window) starts the
-  associated program. It is not used to run anything by itself, and `7zG.exe` does
-  not import it. Worth knowing: a VirusTotal sandbox can report a DNS query for a
-  binary that has no networking imports — it cannot have come from the process.
-
-You can check that yourself:
-
-```bat
-objdump -p 7zG.exe | findstr "DLL Name"
-```
-
-Expected imports: `ADVAPI32 bcrypt COMCTL32 comdlg32 CRYPT32 GDI32 hhctrl.ocx
-KERNEL32 msvcrt ole32 OLEAUT32 SHELL32 USER32` (and `MPR` in 7zFM).
-
-Hardening is enabled: `DYNAMIC_BASE` (ASLR), `NX_COMPAT` (DEP) and
-`HIGH_ENTROPY_VA`, i.e. `DllCharacteristics = 0x160`.
-
----
-
-## 4. Antivirus false positives / 杀毒软件误报
-
-**A modified, locally built `7zG.exe` will be flagged by some engines.** This is
-expected and is not a sign of a real infection. The reasons are specific, and one
-of them is a property of the toolchain rather than of this code:
-
-1. **The file name.** `7zG.exe` is on watchlists because malware often ships it to
-   unpack its payload. A modified `7zG.exe` no longer matches the officially signed
-   file, so it loses that file's reputation.
-2. **Unsigned and brand new.** No Authenticode signature and no prevalence data
-   means a first-seen binary is scored harshly by cloud heuristics.
-3. **The behaviour shape.** It writes an encrypted file (next to the program by
-   default, `%APPDATA%\7-Zip` as the fallback), uses AES
-   and PBKDF2, and starts child processes to compress and extract — a combination
-   that also describes a dropper.
-4. **The import set (fixed).** A UCRT-flavoured MinGW-w64 makes even
-   `int main(){ printf("x"); }` import `api-ms-win-crt-private-l1-1-0.dll`, an
-   undocumented private API set that some engines associate with packed malware.
-   This build is compiled with the **msvcrt** flavour instead, so it imports
-   `msvcrt.dll` exactly like the official binaries:
-
-```bat
-objdump -p 7zG.exe | findstr "DLL Name"
-::   this build : msvcrt.dll + 12 Win32 DLLs, no api-ms-win-crt-* at all
-::   official   : msvcrt.dll + the Win32 DLLs
-```
-
-   (Linking `-lucrtbase` on top of a UCRT toolchain was tried first and does not
-   remove the private import, so the toolchain had to be replaced, not patched.)
-
-   Reasons 1-3 above remain: the binaries are still unsigned, still called
-   `7zG.exe`, and still behave like something that writes an encrypted file and
-   spawns processes. Signing is the fix for those.
-
-What to do:
-
-* Add the build output and the unpacked package to the antivirus **exclusion list**.
-* If you want the detection reviewed, submit the file to your vendor as a false
-  positive (Kaspersky: <https://opentip.kaspersky.com/> → *Submit to reanalyze*;
-  Microsoft: <https://www.microsoft.com/en-us/wdsi/filesubmission>).
-  Include the SHA-256 and the link to this repository.
-* Do **not** disable your antivirus globally, and do not run a build you did not
-  compile yourself from a source tree you have reviewed.
-
-### Reproducible builds and the version resource / 可复现构建与版本资源
-
-Two builds of the same source used to differ byte for byte. Measured cause: **GNU ld writes
-the link time into the PE header** (`TimeDateStamp`); the object files and the compiled
-resources are already deterministic, and the timestamp is the only remaining source. The
-link rules now pass `-Wl,--no-insert-timestamp` on Windows targets (`7zip_gcc.mak`), so
-re-linking twice produces **identical hashes** — verified. That matters because Microsoft
-judges a false-positive report by file hash: a binary that rebuilds identically does not
-need a new submission for every repackaging.
-
-`make` does **not** track the `.rc` files: after editing a resource or a manifest, delete
-`b/g/resource.o` in the component you are building, otherwise the old icons, the old version
-resource and the old manifest are linked again. (This is easy to miss: everything links fine
-and only the version info is stale.)
-
-The published artifact is reproducible as well: building the portable zip again - even into a
-different output folder - produced the same SHA-256 (`84e430be…`), because `Compress-Archive`
-does not store the current time for these entries. The hash inside `SHA256SUMS.txt` is over the
-files, so it stays valid either way.
-
-The version resource of the rebuilt binaries no longer claims to be Igor Pavlov's 7-Zip:
-`CPP/7zip/MyVersionInfo.rc` overrides `CompanyName` / `ProductName` / `LegalCopyright` for
-the components built here (`C/7zVersion.rc` keeps upstream defaults for everything else).
-An unsigned binary that claims the official company and product is the shape of an
-impersonation, and that is what the machine-learning detections react to. The upstream origin
-and the licence stay in the copyright text, and `7z.exe` / `7z.dll` — which ship unchanged
-from the official package — keep their own resource. The manifests now also declare
-`<requestedExecutionLevel level="asInvoker"/>`: the program never needs administrator rights.
-
-关于报毒减少的实测数据（归属实验：哪一层引起检测）见 `docs/vt-attribution.md`。
-
-### Measured result of v1.4.0 / v1.4.0 实测结果
-
-Both binaries were submitted to VirusTotal (74 engines):
-
-| File | Result |
-|------|--------|
-| File | v1.4.0 | v1.4.1 |
-|------|--------|--------|
-| `7zFM.exe` | 1/74 — `Microsoft`: `Trojan:Win32/Wacatac.B!ml` | 1/71 — same |
-| `7zG.exe` | 1/74 — `Microsoft`: `Trojan:Win32/Wacatac.B!ml` | 1/71 — same |
-| `7z-password-vault-26.03-win64.zip` | **0/73** | **0/67** |
-
-(The engine count differs slightly between runs because VirusTotal adds and removes
-engines; the verdicts are identical.)
-
-`!ml` marks a machine-learning verdict, `Wacatac` is its generic name: this is the
-best known false-positive family for unsigned, low-prevalence binaries (a single
-engine, the only one using this model, and no named family from any other vendor).
-The sandbox reports match a plain archiver: no registry writes, no services, no
-persistence, no child process other than itself, and no network traffic — the single
-DNS entry shown for `7zG.exe` cannot come from a binary that imports no socket or
-resolver symbol at all (see section 3).
-
-Submit it to Microsoft as a false positive and the detection normally disappears
-within a day or two for everyone.
-
-Two scripts read and refresh these reports. Both need a free VirusTotal API key in
-`%USERPROFILE%\.vt-key` — a read-only file outside the checkout, so the key can never
-be committed by accident (a stray `.vt-key.txt` in the checkout is gitignored as a
-second safety net):
+## 组装受控内测包
 
 ```powershell
-pwsh -NoProfile -File tests\vt-report.ps1   # read the reports of the current files
-pwsh -NoProfile -File tests\vt-upload.ps1   # submit them again and read the verdicts
+# 目标必须不存在；默认从 dist 递归选择最新的 internal-test ZIP。
+$package = ./tests/deploy.ps1 -PackageDir "$PWD/dist/review-candidate"
+./installer/build.ps1 -PackageDir $package -Version 26.03-review -InternalTest
 ```
 
----
+部署每次使用新目录，只复制逐文件白名单，运行时输入必须匹配固定哈希。默认选择 `dist` 下修改时间最新的 `*internal-test.zip`，先验证独立哈希、压缩包路径白名单和包内清单，再解压到独立测试目录；也可用 `-SeedDir` 指定有完整清单的候选目录。找不到内测包、最新包损坏或编译输出缺失时明确失败，不生成空包，不回退到旧包。最终包只带 3 个语言文件，不含密码库及 `.bak`、转储、私钥、测试或安装/卸载脚本。
 
-## 5. Code signing / 代码签名
+`core-test.ps1`、`ui-test.ps1` 使用相同的默认种子选择。执行 `tests/runtime-input-test.ps1` 验证缺包、最新包选择、哈希失败及路径穿越拒绝。`install-acceptance.ps1 -Package <zip>` 只检查 ZIP 独立哈希、文件集合和包内清单，不执行安装/卸载，也不代表历史的 67 项或 26 项测试。review4 的 GUI 脚本已在独立标准用户 `cs` 桌面完成 373/373 验收，证据见下文。
 
-Signing is the only durable fix: a signed binary with a known publisher stops being
-judged on heuristics alone. A **self-signed certificate does not help** — it is not
-trusted by anything, so it changes nothing for SmartScreen or for antivirus
-reputation.
+默认 ZIP 选择按文件修改时间排序，并不代表版本可信、开发者身份或签名有效。运行时脚本同时检查 ZIP/sidecar、`.build.json`、`.source.sha256`、包内清单的相互一致性，以及当前工作区冻结输入锁；显示源码清单与当前工作区的差异数量，允许以前的构建作为运行时种子。显式目录仅检查包内文件集合和哈希。上述记录均未签名，可一起被修改，因此这是**完整性校验，不是真实性或签名验证**，也不证明现有 EXE 可由当前源码重现。
 
-### Free option for open source: SignPath Foundation
+运行时输入测试默认在 `tests/b/runtime-cases-<本次唯一ID>` 下创建所有夹具和解压目录，在 `finally` 中验证路径边界、名称及重解析点后只删除该目录；`-KeepArtifacts` 才保留。清理失败会报告失败，不扫描删除其他历史目录。
 
-<https://signpath.org> signs open source projects **free of charge**. The project
-does not receive a certificate of its own: the certificate is issued to *SignPath
-Foundation* (they are the publisher), the private key lives in their HSM, and each
-release is signed through SignPath.io after a manual approval by a project member.
+打包再次从空 staging 按白名单复制，验证包内 SHA256SUMS，解包后验证相同文件集合及内容。产出独立 `.sha256`、`.build.json` 和 `.sbom.json`（CycloneDX 文件组件清单）。SBOM 是包内文件清单，不是完整源代码依赖审计。
 
-Conditions that apply to this project (from <https://signpath.org/terms>):
+输入和产物冻结后不要覆盖同名 ZIP；变更内容使用新版本或新输出目录。
 
-| Condition | Status here |
-|-----------|-------------|
-| No malware, OSI-approved licence, no proprietary parts | OK — LGPL, all sources public |
-| Maintained, released, documented | OK — repository, releases, README |
-| No data collection / announce system changes | OK — no network code at all |
-| Sign only your own builds, from your own repository | OK |
-| **Modified upstream software**: upstream must publish signed builds, and the fork must be a *visible* fork (e.g. GitHub's fork feature) | **Needs work** — 7-Zip publishes signed builds, but this repository is not a GitHub fork of 7-Zip |
-| **Reputation**: the project must have verifiable reputation for downloadable executables | **Needs work** — a young repository may be rejected |
-| MFA on GitHub and SignPath; Authors / Reviewers / Approvers roles documented | Needs setup |
-| A **"Code signing policy"** section on the project home page with the required wording, roles and privacy statement | Needs to be added to `README.md` |
-| File metadata restrictions (product name / version set consistently) | Note: the binaries currently carry upstream 7-Zip's version resource |
+## 未签名公开发布门禁
 
-The two "needs work" rows are the real obstacles and are about the project's public
-presentation and reputation, not about the code. A practical sequence is: publish
-the project properly (visible fork of 7-Zip, clear README, a few releases), add the
-code-signing policy section, then apply.
+公开版仍是 portable ZIP，不要求购买证书或签名。必须先独立核对上游源码归档和每个冻结运行时输入，更新 `installer/release-inputs.json` 的 `upstreamVerified`；把核验出处和原始证据保存到发布记录。打包脚本要求干净、已提交的源码树，当前工作区尚不满足。还要在目标 Windows 11 Insider 标准用户中对**相同的两个候选 EXE 哈希**完成 GUI 测试，并用隔离加密库完成升级与回滚验收。旧版程序未必能打开新格式，回滚要验证预升级加密副本可用，不得覆盖唯一可用库。
 
-### Paid alternatives
+`-EvidencePath` 的 JSON 至少包含下列字段；`upgradeRollback.evidencePath` 指向已保存的原始验收记录，其 SHA-256 也须匹配。`standardUserGui` 可从实际 `ui-test.ps1` 结果 JSON 取值，脚本哈希必须等于当前测试脚本。维护者应核对原始日志；JSON 自身不是独立真实性证明。
 
-* **Azure Trusted Signing** — around $10/month, own certificate, supports
-  individual and organisation validation, integrates with CI.
-* **Certum** — advertises open-source friendly code signing; their store did not
-  expose the open-source terms when checked, so verify the conditions directly
-  before relying on it.
-* Any commercial OV/EV code-signing certificate from a CA.
-
-Before signing anything, note that the current version resource still says
-`7-Zip`; a signing service that enforces metadata restrictions will want the
-product name to identify this project.
-
-### How to sign once you have a certificate
-
-```bat
-signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 ^
-  /f mycert.pfx /p <password> ^
-  CPP\7zip\UI\GUI\b\g\7zG.exe
-
-signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 ^
-  /f mycert.pfx /p <password> ^
-  CPP\7zip\UI\FileManager\b\g\7zFM.exe
-```
-
-Verify with `signtool verify /pa /v <file>`. Always timestamp (`/tr /td`): without
-it the signature becomes invalid when the certificate expires. Sign **after** the
-build and **before** `Compress-Archive`, otherwise the package ships unsigned
-binaries.
-
----
-
-## 6. Current hashes / 当前哈希
-
-The package carries its own list: `SHA256SUMS.txt` (written by `tests\deploy.ps1`) holds
-the SHA-256 of **every** file next to its name. Verify a download with that file instead
-of copying hashes from a document - a hard coded hash goes stale as soon as anything is
-rebuilt, and then a correct download looks tampered with (the last releases carried
-hashes that no longer matched).
-
-哈希清单随包发布：`SHA256SUMS.txt`（由 `tests\deploy.ps1` 生成）列出包内**每一个**文件的
-SHA-256 与名字。请用它校验下载，不要在文档里抄哈希 —— 文档里的哈希只要重新编译一次就会过期，
-那时正确的下载反而看起来像被人改过。
-
-```powershell
-Get-Content .\SHA256SUMS.txt | ForEach-Object {
-  if ($_ -match '^([0-9a-f]{64})\s+(.+)$') {
-    $want = $Matches[1]; $file = $Matches[2]
-    $got = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLower()
-    if ($got -ne $want) { Write-Host "MISMATCH $file" }
-  }
+```json
+{
+  "upstreamVerified": true,
+  "runtimeInputsVerified": true,
+  "inputLockSha256": "<SHA-256 of verified release-inputs.json>",
+  "sourceArchiveSha256": "<verified upstream source archive SHA-256>",
+  "windows11InsiderStandardUser": "passed",
+  "windows11InsiderBuild": "<actual OS build>",
+  "standardUserAccount": "<actual standard-user account>",
+  "standardUserGui": {
+    "classification": "PASS", "exitCode": 0, "passed": 393, "failed": 0,
+    "evidencePath": "<path to original ui-test result.json>",
+    "evidenceSha256": "<result file SHA-256>",
+    "scriptSha256": "<current ui-test.ps1 SHA-256>",
+    "fileManagerSha256": "<candidate 7zFM.exe SHA-256>",
+    "guiSha256": "<candidate 7zG.exe SHA-256>"
+  },
+  "upgradeRollback": {
+    "result": "passed", "evidencePath": "<path to original result file>",
+    "evidenceSha256": "<result file SHA-256>",
+    "fileManagerSha256": "<candidate 7zFM.exe SHA-256>",
+    "guiSha256": "<candidate 7zG.exe SHA-256>"
+  },
+  "securityScanStatus": "not-reviewed"
 }
-Write-Host "checked"
 ```
+
+`securityScanStatus` 可为 `not-reviewed`、`scan-unavailable`、`clean` 或 `microsoft-cleared`。前两者不阻止未签名 ZIP 打包，但必须在发布说明中显著写明，不能称为扫描通过；已知检出不能放行。若填写 `clean` 或 `microsoft-cleared`，还须在 `files` 为两个 EXE 各提供唯一的同哈希记录、扫描时间、Defender 引擎版本和安全情报版本；微软复核还须提交编号。历史哈希和历史扫描不得移用。
+
+```powershell
+./installer/build.ps1 -PackageDir <verified-candidate> -Version <unique-version> -EvidencePath <verified-evidence.json>
+```
+
+未使用 `-InternalTest` 时，脚本检查上述来源、GUI、升级回滚及扫描状态字段，记录两个 EXE 的实际签名状态；不会要求或执行签名。产物 `.build.json` 记录验收文件哈希。`-WithSetup` 始终拒绝；脚本不上传文件、不关闭 Defender、不设置排除项。
+
+## 产品安全边界
+
+默认库在用户 APPDATA 目录。DPAPI v4 对整个序列化结构加密认证；主密码使用 AES-256-GCM / PBKDF2-HMAC-SHA256。缓存过期不等于自动锁定。内存清理和刷盘均有系统层面的限制，详见 README。
+
+Windows 11 Insider 管理员桌面的完整 GUI 回归、真实满盘及 ACL 拒绝已有记录。新增升级回滚脚本后，`Nomozi` 普通桌面和独立 `cs` 标准账户各完成 **393/393**，见[升级回滚验收](docs/review4-upgrade-rollback-20260923.md)和[当前证据索引](docs/review4-validation-evidence-20260924.json)。review4 构建时源码未提交，不能直接改标公开版。当前哈希安全扫描/复核未做时须如实声明；历史记录不能为本次构建背书。

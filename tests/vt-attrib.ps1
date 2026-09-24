@@ -30,7 +30,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-$pkg = Join-Path $root "7-Zip-密码管家版"
+. (Join-Path $PSScriptRoot 'runtime-input.ps1')
+$pkg = Resolve-TestRuntime
+throw 'Historical SFX attribution is not applicable to portable ZIP releases. Use current binary hashes with vt-report.ps1.'
 $sevenZip = Join-Path $pkg "7z.exe"
 $stub = Join-Path $pkg "7z.sfx"
 
