@@ -14,6 +14,10 @@ function Assert-TargetOsEvidence($Evidence) {
     throw 'Upstream verification and Windows 11 Insider standard-user regression with a recorded OS build must pass.'
   }
 }
+function Resolve-ReleaseEvidencePath([string]$Path) {
+  if([IO.Path]::IsPathRooted($Path)){return [IO.Path]::GetFullPath($Path)}
+  return [IO.Path]::GetFullPath((Join-Path $script:ReleasePolicyRoot $Path))
+}
 function Assert-PublicReleaseEvidence($Evidence,[string]$Candidate,[string]$InputLockPath) {
   Assert-TargetOsEvidence $Evidence
   $lock=Get-Content -LiteralPath $InputLockPath -Raw | ConvertFrom-Json
@@ -51,22 +55,24 @@ function Assert-PublicReleaseEvidence($Evidence,[string]$Candidate,[string]$Inpu
   if($gui.scriptSha256 -ne (Get-FileHash -LiteralPath $currentGuiScript -Algorithm SHA256).Hash){
     throw 'Standard-user GUI evidence was produced by a different test script.'
   }
-  if(-not(Test-Path -LiteralPath $gui.evidencePath -PathType Leaf) -or
-     $gui.evidenceSha256 -ne (Get-FileHash -LiteralPath $gui.evidencePath -Algorithm SHA256).Hash){
+  $guiEvidencePath=Resolve-ReleaseEvidencePath ([string]$gui.evidencePath)
+  if(-not(Test-Path -LiteralPath $guiEvidencePath -PathType Leaf) -or
+     $gui.evidenceSha256 -ne (Get-FileHash -LiteralPath $guiEvidencePath -Algorithm SHA256).Hash){
     throw 'Original standard-user GUI result file is missing or changed.'
   }
-  $guiResult=Get-Content -LiteralPath $gui.evidencePath -Raw | ConvertFrom-Json
+  $guiResult=Get-Content -LiteralPath $guiEvidencePath -Raw | ConvertFrom-Json
   foreach($field in 'classification','exitCode','passed','failed','scriptSha256','fileManagerSha256','guiSha256'){
     if($guiResult.$field -ne $gui.$field){throw "Standard-user GUI result differs from release evidence: $field"}
   }
   $rollback=$Evidence.upgradeRollback
+  $rollbackEvidencePath=if($null -eq $rollback){''}else{Resolve-ReleaseEvidencePath ([string]$rollback.evidencePath)}
   if($null -eq $rollback -or $rollback.result -ne 'passed' -or
      [string]::IsNullOrWhiteSpace([string]$rollback.evidencePath) -or
-     -not(Test-Path -LiteralPath $rollback.evidencePath -PathType Leaf) -or
-     $rollback.evidenceSha256 -ne (Get-FileHash -LiteralPath $rollback.evidencePath -Algorithm SHA256).Hash){
+     -not(Test-Path -LiteralPath $rollbackEvidencePath -PathType Leaf) -or
+     $rollback.evidenceSha256 -ne (Get-FileHash -LiteralPath $rollbackEvidencePath -Algorithm SHA256).Hash){
     throw 'Current candidate upgrade and rollback PASS evidence is required.'
   }
-  $rollbackResult=Get-Content -LiteralPath $rollback.evidencePath -Raw | ConvertFrom-Json
+  $rollbackResult=Get-Content -LiteralPath $rollbackEvidencePath -Raw | ConvertFrom-Json
   if($rollbackResult.result -ne 'passed' -or
      $rollbackResult.fileManagerSha256 -ne $rollback.fileManagerSha256 -or
      $rollbackResult.guiSha256 -ne $rollback.guiSha256 -or
