@@ -1,0 +1,8 @@
+LANGUAGE: en
+LANGUAGE: zh-cn
+LANGUAGE: zh-tw
+ENVIRONMENT: independent CryptProtectData=OK error=0
+REAL-ACL: deny DELETE on primary + FILE_DELETE_CHILD on parent; save=denied; restore=OK
+PASS: production language parser validates en, zh-cn, zh-tw and restore messages
+PASS: authenticated restore, safety copies, conflicts, shared sessions/crash release, real ACL, faults, formats, paths, and old master password
+PASS: default paths, encrypted backup rotation/recovery/failures, cache clearing, real DPAPI/AES, cancellation, corruption, rollback, locked files, crash recovery, and 200 concurrent saves

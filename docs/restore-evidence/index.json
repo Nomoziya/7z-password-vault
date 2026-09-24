@@ -1,0 +1,38 @@
+{
+  "sourceCommit": "d0e2e2a7f41b440403b48760c0f15619fb2c7608",
+  "candidate": "7z-password-vault-1.6.0-restore-dev3-win64-internal-test.zip",
+  "candidateSha256": "5fb6910ab854989250d8b1fbd777d54e2ade3a18432bcd31f7300f4938f18319",
+  "note": "Raw results copied unchanged. Earlier VHD result predates the final Win32-error preservation change. Nomozi GUI is not independent standard-account acceptance.",
+  "records": [
+    {
+      "file": "clean-build-result.json",
+      "sha256": "352D46AB1AB91B5FEC5199AC7B1386BF9B3B65291354C059FB50C9907D21089B",
+      "original": "tests\\b\\clean-build-fcc4db1fab714ad8892648ba05786e96\\result.json"
+    },
+    {
+      "file": "earlier-real-disk-result.json",
+      "sha256": "52CE463D5250D431E95E8C36604EDEF3DA52534EA5680BEA87C27941864EE69D",
+      "original": "tests\\b\\real-disk-36188f2ec3fd4e90b219956f05e1c5a4\\result.json"
+    },
+    {
+      "file": "gui-result.json",
+      "sha256": "08530D56A5C722F3B1566A282AA2D809ADF432B85B21D24062A34E809C1B0F48",
+      "original": "tests\\b\\ui-run-87fb8e6387d3477282e1a7d554dcd3d8\\result.json"
+    },
+    {
+      "file": "native-result.json",
+      "sha256": "4E70EBC07C278F37DB0E530EFD58DC937508E3DCDDE1D51C29518C94AD11C984",
+      "original": "tests\\b\\native-run-83934a0c5f254bb79ecb62b3bcdc3829\\result.json"
+    },
+    {
+      "file": "native-result.log",
+      "sha256": "56852F2EC3CDA983A3FE8D7853CB273D8F433D4F5EB0E0F36898B8F2621C97B7",
+      "original": "tests\\b\\native-run-83934a0c5f254bb79ecb62b3bcdc3829\\result.log"
+    },
+    {
+      "file": "upgrade-rollback-result.json",
+      "sha256": "6B834E28A8ED2F2D4AC036D8BD2D1BF839A7D2A465C8F9340C315F4C22E9D826",
+      "original": "tests\\b\\ui-run-87fb8e6387d3477282e1a7d554dcd3d8\\upgrade-rollback-result.json"
+    }
+  ]
+}

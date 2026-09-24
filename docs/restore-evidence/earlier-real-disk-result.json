@@ -1,0 +1,23 @@
+{
+  "startedUtc": "2026-09-24T08:04:30.1562739Z",
+  "classification": "PASS",
+  "nativeTestExe": "D:\\DSH Work\\7z-passward\\tests\\b\\native-run-d2d276581583493781d4de7f63121b12\\vault-native-test.exe",
+  "nativeTestExeSha256": "E4C0C6C9EC2263257FD5BEADCA39572F92B2138A8FB60F4EC6079C2530D91F7E",
+  "isolatedVhd": "D:\\DSH Work\\7z-passward\\tests\\b\\real-disk-36188f2ec3fd4e90b219956f05e1c5a4\\isolated-full-volume.vhd",
+  "fixedMaximumMiB": 96,
+  "driveLetter": "Z",
+  "availableBytesBeforeFill": 85598208,
+  "fillerBytesWritten": 85598208,
+  "minimumWriteBlockBytesTried": 512,
+  "fillWin32Error": 112,
+  "fillFailurePhase": "WriteFile",
+  "fillErrorMessage": "磁盘空间不足。",
+  "seedExitCode": 0,
+  "seedVaultBytes": 524394,
+  "diskFailureExitCode": 0,
+  "restoreFailureExitCode": 0,
+  "diskFailureLog": "D:\\DSH Work\\7z-passward\\tests\\b\\real-disk-36188f2ec3fd4e90b219956f05e1c5a4\\disk-failure.log",
+  "cleanup": "DETACHED_AND_DELETED",
+  "availableBytesAfterFill": 0,
+  "finishedUtc": "2026-09-24T08:04:36.7331234Z"
+}

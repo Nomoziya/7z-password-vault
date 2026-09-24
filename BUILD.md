@@ -25,9 +25,11 @@ pwsh -NoProfile -File tests/release-gate-test.ps1
 
 两个 GUI 目标使用 `-static` 链接 MinGW 运行库。组装候选包时 `tests/deploy.ps1` 会检查 PE 导入表，拒绝仍依赖未打包的 `libgcc_s_seh-1.dll`、`libstdc++-6.dll` 或 `libwinpthread-1.dll` 的 EXE；因此标准用户机器不必安装编译器或修改 `PATH`。
 
+恢复功能的冻结候选与实际验证状态见 [恢复验证记录](docs/restore-validation.md)。在干净、已提交的工作区可运行 `pwsh -NoProfile -File tests/clean-build-test.ps1 -CandidateDir <候选目录>`：脚本从当前提交导出全新源码，分别构建两个 GUI 程序并核对与候选的 SHA-256，记录提交、工具链、源码归档与编译日志哈希。它不会复用已有目标文件；编译器的 `bin` 目录须已在 `PATH` 中。
+
 原生安全测试编译并运行生产密码库代码，使用测试专属临时库和设置适配器，不读写用户真实密码库或注册表。涵盖 DPAPI、主密码、错误密码、取消、并发保存、篡改/损坏、故障注入和崩溃恢复。磁盘满/替换权限拒绝属于 API 故障注入，不能替代真实磁盘/ACL/断电和 GUI 验收。
 
-测试包含独立真实 DPAPI 探针。若探针与生产加密同时失败，将报告准确 API/错误码及保存阶段，退出码为 78，分类 `ENVIRONMENT_BLOCKED`，绝不计为通过；DPAPI 前置条件正常但断言失败分类 `TEST_FAILURE`。符号链接夹具也必须实际创建成功，不能跳过。应在同一 Windows 普通用户环境重跑原脚本；隔离环境结果与普通用户结果分开保存。每次运行的日志和 JSON 分类记录位于 `tests/b/native-result-*.log*`。
+测试包含独立真实 DPAPI 探针。若探针与生产加密同时失败，将报告准确 API/错误码及保存阶段，退出码为 78，分类 `ENVIRONMENT_BLOCKED`，绝不计为通过；DPAPI 前置条件正常但断言失败分类 `TEST_FAILURE`。符号链接夹具也必须实际创建成功，不能跳过。应在同一 Windows 普通用户环境重跑原脚本；隔离环境结果与普通用户结果分开保存。每次运行的编译日志、执行日志、输入哈希与 JSON 分类记录位于 `tests/b/native-run-<唯一ID>/`，历史日志路径不作为当前运行证据。
 
 ## 组装受控内测包
 

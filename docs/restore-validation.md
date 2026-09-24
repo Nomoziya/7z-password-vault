@@ -22,9 +22,12 @@
 | 运行时输入 | 10/10 | `tests/restore-runtime.log` |
 | 发布门禁回归 | 33/33（门禁脚本未再变化） | `tests/restore-release-gate.log` |
 | portable 包验收 | dev3 PASS | `tests/install-acceptance.ps1 -Package <上述 ZIP>` |
+| 干净提交独立构建 | PASS；从提交 `d0e2e2a` 导出的全新源码构建，两个 EXE 均与 dev3 逐字节一致 | `tests/b/clean-build-fcc4db1fab714ad8892648ba05786e96/result.json` |
 | 三种语言资源 | 生产语言解析器通过 en、zh-cn、zh-tw 及新增消息字段检查 | 上述原生回归；不等于三种语言的所有缩放均已目视验收 |
 
 GUI 新用例验证默认取消、未应用设置拒绝、其他会话占用拒绝、恢复密文字节、`.bak` 不变、恢复前副本、重启后的条目，以及用恢复后的密码实际解压并比较内容。
+
+上述原生、GUI、升级回滚、干净构建及早期磁盘满 JSON 已原样归档至 `docs/restore-evidence/`，文件哈希与原路径见该目录 `index.json`。本次仅归档结果，不修改原始记录。dev3 ZIP、sidecar、包内清单、构建来源摘要及 15 项 SBOM 哈希已核对一致；两份 EXE 实际签名均为 `NotSigned`，扫描状态 `not-reviewed`。
 
 管理员已执行真实磁盘满恢复：`tests/b/real-disk-36188f2ec3fd4e90b219956f05e1c5a4/result.json`。96 MiB 隔离 VHD 剩余 0 字节，写入错误 112；恢复在 `preserve-current` 阶段拒绝，保存及恢复保护断言通过，VHD 已卸载删除。它绑定先前原生 EXE `E4C0C6C9EC2263257FD5BEADCA39572F92B2138A8FB60F4EC6079C2530D91F7E`。随后生产代码仅修正关闭句柄时保留错误码；最终原生 EXE 为 `99CC140D1F03426A3D292E729C75E8004916338D7D74A566291AB7489D54862A`，已请求最终 EXE 的同项实测，不混用两次证据。
 
@@ -39,7 +42,7 @@ GUI 新用例验证默认取消、未应用设置拒绝、其他会话占用拒�
 ## 尚待完成
 
 - 独立标准账户 `cs` 的同哈希完整 GUI/升级回滚：运行 `tests/restore-standard-user-run.ps1`；自动复制结果到公共文档目录。
-- 最终原生 EXE 的真实恢复磁盘满记录；干净已提交源码构建并比较两个 EXE。
+- 最终原生 EXE 的真实恢复磁盘满记录。
 - 不同 Windows 账户对 DPAPI 备份的实际拒绝；三种语言的显示缩放/键盘专项验收；注册表写入失败的专项 GUI 验收。
 - 原计划中的启动残留材料提示及临时文件清理失败单独报告尚未实现。当前只保留密文材料，绝不自动使用崩溃残留覆盖库；完整恢复前副本保留供手动找回。
 
