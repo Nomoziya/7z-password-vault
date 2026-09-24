@@ -50,15 +50,15 @@
 
 ## English
 
-This is an unofficial 7-Zip 26.03 fork under controlled testing, not a public release. The current acceptance scope is Windows 11 Insider x64. GUI regression passed in an administrator desktop session; a standard-user session has not yet been verified. English, Simplified Chinese, and Traditional Chinese interfaces are available.
+This is an unofficial 7-Zip 26.03 fork. The verified scope is Windows 11 Insider x64. An independent standard-user session passed 393 GUI and upgrade/rollback checks with executables byte-identical to this portable build. English, Simplified Chinese, and Traditional Chinese interfaces are available.
 
 Extract the ZIP and run `7zFM.exe`. The vault defaults to `%APPDATA%\7-Zip\7zPasswordVault.dat`; a portable vault requires an explicit location and a master password for cross-device use. Existing program-folder vaults require an explicit choice. Migration preserves the original and refuses an existing destination.
 
-Concurrent saves merge independent changes under a cross-process mutex. Conflicting changes fail visibly. DPAPI v4 authenticates the entire record sequence; v2/v3 are read for migration only. Back up before upgrading: older builds cannot read v4.
+Concurrent saves merge independent changes under a cross-process mutex. Conflicting changes fail visibly. DPAPI v4 authenticates the entire record sequence; v2/v3 are read for migration only. Back up before upgrading: some older builds cannot read v4.
 
 The five-minute setting expires the cached master password when it is next requested. It does **not** lock an open vault or clear a visible password field. Sensitive owners and buffers are wiped on scope exit, but complete removal of all system/UI copies is not guaranteed.
 
-Public packaging is unsigned by design and requires verified upstream inputs, current-hash Windows 11 Insider standard-user GUI evidence, and upgrade/rollback evidence. Scan status is reported honestly; unsigned files may trigger warnings or false positives. Do not disable antivirus protection or add exclusions. See BUILD.md for release commands.
+This portable build is unsigned by design. The current security-scan status is `not-reviewed`, which does not mean that a scan passed. Verify the ZIP SHA-256 from an independently trusted project channel before use. Unsigned files may trigger warnings or false positives. Do not disable antivirus protection or add exclusions. See BUILD.md for build and verification commands.
 
 ## 许可证
 
