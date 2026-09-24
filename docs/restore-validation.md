@@ -18,6 +18,8 @@
 | --- | --- | --- |
 | 最终生产代码的原生完整回归 | PASS；真实 DPAPI、ACL、注入故障、恢复前后崩溃、旧主密码及 200 次并发保存 | `tests/b/native-run-83934a0c5f254bb79ecb62b3bcdc3829/result.json` |
 | 完整 GUI 与 v1.5.0 升级/回滚 | 426 通过、0 失败；账户 WW\Nomozi，未提权，不能冒充独立标准账户 | `tests/b/ui-run-87fb8e6387d3477282e1a7d554dcd3d8/result.json` 及同目录 `upgrade-rollback-result.json` |
+| 独立标准账户完整 GUI 与升级/回滚 | WW\cs，build 26220，未提权；426/0，核心压缩退出码 0；脚本、候选 ZIP 与两个 EXE 哈希均一致，预升级副本与回滚副本哈希一致 | `docs/restore-evidence/standard-user-gui-result.json`、`standard-user-upgrade-rollback-result.json`、`standard-user-acceptance.json` |
+| 最终原生 EXE 真实磁盘满恢复 | PASS；96 MiB VHD 实际写满，剩余 0 字节；恢复在保留当前副本阶段遇到错误 112 后拒绝提交，保护断言通过，VHD 已卸载删除 | `tests/b/real-disk-059e5b95275d44c594c96fdd685f11f6/result.json`，归档为 `docs/restore-evidence/real-disk-result.json` |
 | 核心压缩 | 39/39，dev3 | `tests/restore-core.log` |
 | 运行时输入 | 10/10 | `tests/restore-runtime.log` |
 | 发布门禁回归 | 33/33（门禁脚本未再变化） | `tests/restore-release-gate.log` |
@@ -29,7 +31,9 @@ GUI 新用例验证默认取消、未应用设置拒绝、其他会话占用拒�
 
 上述原生、GUI、升级回滚、干净构建及早期磁盘满 JSON 已原样归档至 `docs/restore-evidence/`，文件哈希与原路径见该目录 `index.json`。本次仅归档结果，不修改原始记录。dev3 ZIP、sidecar、包内清单、构建来源摘要及 15 项 SBOM 哈希已核对一致；两份 EXE 实际签名均为 `NotSigned`，扫描状态 `not-reviewed`。
 
-管理员已执行真实磁盘满恢复：`tests/b/real-disk-36188f2ec3fd4e90b219956f05e1c5a4/result.json`。96 MiB 隔离 VHD 剩余 0 字节，写入错误 112；恢复在 `preserve-current` 阶段拒绝，保存及恢复保护断言通过，VHD 已卸载删除。它绑定先前原生 EXE `E4C0C6C9EC2263257FD5BEADCA39572F92B2138A8FB60F4EC6079C2530D91F7E`。随后生产代码仅修正关闭句柄时保留错误码；最终原生 EXE 为 `99CC140D1F03426A3D292E729C75E8004916338D7D74A566291AB7489D54862A`，已请求最终 EXE 的同项实测，不混用两次证据。
+早期管理员磁盘满记录 `tests/b/real-disk-36188f2ec3fd4e90b219956f05e1c5a4/result.json` 绑定原生 EXE `E4C0C6C9EC2263257FD5BEADCA39572F92B2138A8FB60F4EC6079C2530D91F7E`，单独保留为历史结果。最终记录 `real-disk-059e5b95275d44c594c96fdd685f11f6` 已核对绑定最终原生 EXE `99CC140D1F03426A3D292E729C75E8004916338D7D74A566291AB7489D54862A`，不再缺少最终程序的实测证据。输出中旧保存测试的 `Win32=2` 不是满盘判据；满盘由实际填充写入的错误 112、剩余空间 0 和恢复事务的 `preserve-current / Win32=112` 共同记录。
+
+标准账户原始 JSON 来自脚本自动复制的公共目录 `C:/Users/Public/Documents/7zpw-restore-evidence-abac633dcaeb46d5b5a822d52ab72fae`，执行时间为 2026-09-24 14:36:26–14:41:22 UTC。已原样归档并核对当前脚本与冻结候选哈希，无需重复这轮完整验收。
 
 ## 历史失败与环境限制
 
@@ -41,8 +45,6 @@ GUI 新用例验证默认取消、未应用设置拒绝、其他会话占用拒�
 
 ## 尚待完成
 
-- 独立标准账户 `cs` 的同哈希完整 GUI/升级回滚：运行 `tests/restore-standard-user-run.ps1`；自动复制结果到公共文档目录。
-- 最终原生 EXE 的真实恢复磁盘满记录。
 - 不同 Windows 账户对 DPAPI 备份的实际拒绝；三种语言的显示缩放/键盘专项验收；注册表写入失败的专项 GUI 验收。
 - 原计划中的启动残留材料提示及临时文件清理失败单独报告尚未实现。当前只保留密文材料，绝不自动使用崩溃残留覆盖库；完整恢复前副本保留供手动找回。
 

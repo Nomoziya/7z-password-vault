@@ -1,0 +1,17 @@
+{
+  "classification": "PASS",
+  "exitCode": 0,
+  "passed": 426,
+  "failed": 0,
+  "failedChecks": [],
+  "abortMessage": null,
+  "startedUtc": "2026-09-24T14:36:26.7942428Z",
+  "finishedUtc": "2026-09-24T14:41:22.3513021Z",
+  "scriptSha256": "E15D57AA283DF25D508D31FF0A904343C42BBD2EB8627D048685F41606647B0A",
+  "account": "WW\\cs",
+  "windowsBuild": "10.0.26220.0",
+  "elevated": false,
+  "runtimeDirectory": "C:\\Users\\cs\\AppData\\Local\\7zpw-restore-149c2e8042694303a1c7b4f2a083388a\\candidate",
+  "fileManagerSha256": "BA5860CED63A5A769AAC54731F7B34400FA2CE49147E00887C018E4E92D51AF7",
+  "guiSha256": "399287C354CE64DAF606B0ECB794E3E7AF47BB9B07D718ABCF8F742317B81AD1"
+}

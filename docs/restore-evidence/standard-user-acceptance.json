@@ -1,0 +1,23 @@
+{
+  "account": "WW\\cs",
+  "windowsBuild": "10.0.26220.0",
+  "standardAccount": true,
+  "coreExitCode": 0,
+  "guiExitCode": 0,
+  "coreLogSha256": "92F9D6DF05566532DE780F345682A09FF90EA73D6E28D5A25D64E340C69891C2",
+  "guiLogSha256": "0FCCFC2820A495FEE350CAD96F11C579733B9B4748FCDEC28A3B9733A2F48500",
+  "packages": [
+    {
+      "folder": "candidate",
+      "hash": "5fb6910ab854989250d8b1fbd777d54e2ade3a18432bcd31f7300f4938f18319",
+      "relative": "dist/restore-release-20260924/7z-password-vault-1.6.0-restore-dev3-win64-internal-test.zip"
+    },
+    {
+      "folder": "baseline",
+      "hash": "81f9c9b16e91c07ccb353c3390c03396e4566f20f5acde0a5338941f6f8739b8",
+      "relative": "dist/v1.5.0-20260924/7z-password-vault-1.5.0-win64-portable.zip"
+    }
+  ],
+  "stage": "C:\\Users\\cs\\AppData\\Local\\7zpw-restore-149c2e8042694303a1c7b4f2a083388a",
+  "finishedUtc": "2026-09-24T14:41:22.4153336Z"
+}

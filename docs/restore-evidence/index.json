@@ -2,7 +2,7 @@
   "sourceCommit": "d0e2e2a7f41b440403b48760c0f15619fb2c7608",
   "candidate": "7z-password-vault-1.6.0-restore-dev3-win64-internal-test.zip",
   "candidateSha256": "5fb6910ab854989250d8b1fbd777d54e2ade3a18432bcd31f7300f4938f18319",
-  "note": "Raw results copied unchanged. Earlier VHD result predates the final Win32-error preservation change. Nomozi GUI is not independent standard-account acceptance.",
+  "note": "Raw results copied unchanged. Final native EXE passed real VHD exhaustion; independent standard account WW\\cs passed 426/0 GUI and v1.5.0 upgrade/rollback with exact candidate and script hashes. Earlier VHD and Nomozi GUI records remain separately labeled.",
   "records": [
     {
       "file": "clean-build-result.json",
@@ -33,6 +33,26 @@
       "file": "upgrade-rollback-result.json",
       "sha256": "6B834E28A8ED2F2D4AC036D8BD2D1BF839A7D2A465C8F9340C315F4C22E9D826",
       "original": "tests\\b\\ui-run-87fb8e6387d3477282e1a7d554dcd3d8\\upgrade-rollback-result.json"
+    },
+    {
+      "file": "real-disk-result.json",
+      "sha256": "E688C2E100868728F164E9F0AD377CE044DA9DF9FD26D0116BBCF4BCD73B72B4",
+      "original": "tests\\b\\real-disk-059e5b95275d44c594c96fdd685f11f6\\result.json"
+    },
+    {
+      "file": "standard-user-acceptance.json",
+      "sha256": "850479307AC4F2A43AA887AF10A166B949FCD7B5D9922B82E8B1E4A06538249F",
+      "original": "C:\\Users\\Public\\Documents\\7zpw-restore-evidence-abac633dcaeb46d5b5a822d52ab72fae\\acceptance.json"
+    },
+    {
+      "file": "standard-user-gui-result.json",
+      "sha256": "D686780A3007F0E3B841E13EFA6748689ACFEECC9A8342A3508F43ACBFBD5231",
+      "original": "C:\\Users\\Public\\Documents\\7zpw-restore-evidence-abac633dcaeb46d5b5a822d52ab72fae\\result.json"
+    },
+    {
+      "file": "standard-user-upgrade-rollback-result.json",
+      "sha256": "FCB2DD2A8A30E7302E9394EA45CE7B32AEDC89E5E3A59EFD5D5A1670418A0D95",
+      "original": "C:\\Users\\Public\\Documents\\7zpw-restore-evidence-abac633dcaeb46d5b5a822d52ab72fae\\upgrade-rollback-result.json"
     }
   ]
 }
