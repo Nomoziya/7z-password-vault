@@ -1,0 +1,30 @@
+{
+  "classification": "PASS",
+  "checkedUtc": "2026-09-25T08:15:20.8083578Z",
+  "sourceCommit": "a4800dc35829d83bf186f689dc3f13aaec8aa2a6",
+  "sourceDirty": false,
+  "internalTest": false,
+  "package": "dist\\v1.6.0-rc1-final-20260925\\7z-password-vault-1.6.0-rc1-win64-portable.zip",
+  "packageSha256": "9f028785a940ce3f86d635a3a85655b331b9331e256872dc32da947dcf62985d",
+  "sourceArchive": "7z-password-vault-1.6.0-rc1-source.zip",
+  "sourceArchiveSha256": "2c36b470e32f7c26a9a4d89ffc341a18c703d1f355c833f9248ff9746d53cd99",
+  "fileManagerSha256": "2908567C6B7088450216FE708848A20E501EA87F6B7483D7E518A21BF0F05CA2",
+  "guiSha256": "839BB203FBAF37E1DB5D6A2EC4CEE8433AFA85826FAA315E82C0D5E9D5B8F62B",
+  "sourceFilesVerified": 1494,
+  "sbomFilesVerified": 15,
+  "signatureStatus": {
+    "7zFM.exe": "NotSigned",
+    "7zG.exe": "NotSigned"
+  },
+  "securityScanStatus": "not-reviewed",
+  "checks": [
+    "install-acceptance.ps1 PASS: ZIP sidecar, exact file set and every embedded manifest hash",
+    "Build record, source manifest and all listed checkout files match",
+    "SBOM contains 15 unique files with matching hashes",
+    "Both EXEs match independent standard-user full GUI acceptance",
+    "Source code, language resources and test scripts unchanged from independently reproduced 77addbf build",
+    "Original evidence bytes survive clean checkout",
+    "Unsigned public packaging gate PASS with sourceDirty=false"
+  ],
+  "note": "No new GUI/native run: identical program hashes reuse validated dev4 records. Source ZIP is git archive of the packaging commit; frozen upstream runtime inputs remain external, as documented in BUILD.md."
+}
