@@ -22,9 +22,9 @@
 
 每次覆盖已有密码库前，保留上一份原始加密文件为同目录的 `7zPasswordVault.dat.bak`（自定义文件名则追加 `.bak`）。只保留上一版本；首次保存不生成备份。备份创建或替换失败会中止保存，原库保持不变。主文件替换失败时，备份可能与未改变的原库相同。备份始终是本地密文，不导出明文。
 
-恢复时先退出所有本程序进程，保留当前文件，再将 `.bak` 复制到新的路径并在设置中选用；不会自动用备份覆盖损坏的库。备份使用上一版本的加密方式和主密码，修改主密码后旧备份仍需要旧密码；DPAPI 备份仍受原 Windows 账户约束。备份也可能包含刚删除的条目，应按敏感数据保管。
+如需手动恢复，先退出所有本程序进程，保留当前文件，再将 `.bak` 复制到新的路径并在设置中选用。备份使用上一版本的加密方式和主密码，修改主密码后旧备份仍需要旧密码；DPAPI 备份仍受原 Windows 账户约束。备份也可能包含刚删除的条目，应按敏感数据保管。
 
-设置页新增“恢复上一版本…”：先应用或取消未保存的设置，验证当前库对应的 `.bak` 后确认恢复。自动恢复仅接受 v4 备份；主密码备份需要备份当时的密码，DPAPI 仍受 Windows 账户约束。当前库损坏或缺失时也可恢复可验证的备份。最近的修改将撤回，已删除的条目可能重新出现。此功能的候选验收状态见 [恢复验证记录](docs/restore-validation.md)，历史发布结果不能代替新功能验收。
+设置页新增“恢复上一版本…”：先应用或取消未保存的设置，验证当前库对应的 `.bak` 后确认恢复。自动恢复仅接受 v4 备份；主密码备份需要备份当时的密码，DPAPI 仍受 Windows 账户约束。当前库损坏或缺失时也可恢复可验证的备份。最近的修改将撤回，已删除的条目可能重新出现。此功能的验收状态见源码仓库 [恢复验证记录](docs/restore-final-validation.md)，历史发布结果不能代替新功能验收。
 
 恢复前会保留原始文件字节到同目录唯一的 `.pre-restore-<日期>-<随机ID>` 密文副本；该副本不自动删除。恢复采用同目录临时密文和原子替换，提交前失败不改变当前库或 `.bak`。恢复本身不轮换 `.bak`，之后正常保存仍按原规则轮换。不存在原文件时不生成恢复前副本。恢复文件成功但设置刷新失败时，会明确提示部分完成，不再次覆盖文件。
 
@@ -56,7 +56,9 @@
 
 ## English
 
-This is an unofficial 7-Zip 26.03 fork. The verified scope is Windows 11 Insider x64. An independent standard-user session passed 393 GUI and upgrade/rollback checks with executables byte-identical to this portable build. English, Simplified Chinese, and Traditional Chinese interfaces are available.
+This is an unofficial 7-Zip 26.03 fork. The verified scope is Windows 11 Insider x64, build 26220. An independent standard-user session passed 436 GUI and upgrade/rollback checks with executables byte-identical to this portable build. English, Simplified Chinese, and Traditional Chinese interfaces are available.
+
+The password settings page offers Restore previous version. It authenticates the current vault's encrypted v4 backup, asks for confirmation, preserves the current encrypted file, and atomically restores the backup. Old master-password backups require their original password; DPAPI backups remain bound to their Windows account. Deleted entries may return. Close older program versions before restoring.
 
 Extract the ZIP and run `7zFM.exe`. The vault defaults to `%APPDATA%\7-Zip\7zPasswordVault.dat`; a portable vault requires an explicit location and a master password for cross-device use. Existing program-folder vaults require an explicit choice. Migration preserves the original and refuses an existing destination.
 
