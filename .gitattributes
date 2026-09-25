@@ -2,3 +2,4 @@
 /tests/ui-test.ps1 -text whitespace=cr-at-eol
 /docs/review4-gui-cs-20260924.json -text whitespace=cr-at-eol
 /docs/review4-upgrade-rollback-cs-20260924.json -text whitespace=cr-at-eol
+/docs/restore-dev4-evidence/* -text whitespace=cr-at-eol

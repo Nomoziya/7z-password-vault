@@ -35,6 +35,9 @@ dev4 为未签名内测包，生成时源码尚未提交，保留真实 `sourceD
 | 完整 GUI 与 v1.5.0 升级回滚 | 436/0，WW\Nomozi 普通桌面；不是独立标准账户结果 | `tests/b/ui-run-b36bf90f36024868a2f418d3f41468b2/result.json` 及同目录升级回滚 JSON |
 | 干净提交重建 | PASS；提交 `77addbfbdd430db3ff29db76ae8f506039eb450b` 导出到全新目录构建，两个 EXE 与 dev4 哈希相同 | `tests/b/clean-build-6e03ecca714a4b32b76b5b61451ff4b8/result.json` |
 | 包验收及附属记录 | PASS；ZIP、sidecar、包内清单、构建/来源摘要与 15 个 SBOM 文件一致，两个 EXE 确认为 NotSigned，扫描 not-reviewed | dev4 ZIP 及其 `.build.json`、`.source.sha256`、`.sbom.json` |
+| 独立标准账户完整 GUI 与升级回滚 | WW\cs，436/0；DPI 192（200%），核心测试及完整 GUI 退出码均为 0 | `restore-dev4-evidence/standard-user-gui-result.json`、`standard-user-upgrade-rollback-result.json`、`standard-user-acceptance.json` |
+| 跨账户 DPAPI | cs 自身 DPAPI 正常；拒绝 Nomozi 创建的备份，原库/备份不变且缓存清除，PASS | `restore-dev4-evidence/cross-account-result.json` 及同目录日志 |
+| 最终原生 EXE 真实磁盘满 | 96 MiB VHD 实际耗尽，剩余 0，错误 112；保存和恢复保护断言通过；VHD 已卸载删除 | `tests/b/real-disk-1942794ee54c44dcafd10c27ed33cf38/result.json`，原样归档 `restore-dev4-evidence/real-disk-result.json` |
 
 三种语言均在实际窗口 DPI 144（150%）验证文字边界、键盘取消和恢复流程。未修改系统显示设置；100%/125% 未运行，不能把本结果泛化到所有缩放。
 
@@ -48,11 +51,10 @@ dev4 为未签名内测包，生成时源码尚未提交，保留真实 `sourceD
 - 夹具现在预先持有权限专用句柄，通过显式安全描述符恢复 ACL。Windows 会更新 `DACL_AUTO_INHERITED` 状态位，因此比较全部 ACE 原始字节及继承保护策略，确认权限完全恢复，而不把系统维护的该状态位误判为权限变化。
 - 设置恢复不再删除重建整项注册表键；测试前保存本轮配置快照。失败记录 `ui-run-4238c16a6a884c879a5e5ee0bdb93058`、`ui-run-e7573fc445ed49a8845d7edc8d5c5520` 及 `tests/restore-final-focused-zh*.log` 保留，之后三种语言专项全部通过。
 
-## 待收齐
+## 验收结论
 
-- 独立标准账户对 dev4 的完整验收，以及真实跨账户 DPAPI 拒绝。`tests/restore-standard-user-run.ps1` 已固定 dev4 ZIP，并会调用 `restore-cross-account-test.ps1`，将原始结果复制到公共目录。
-- dev4 原生测试程序的真实磁盘满记录。dev3 已通过的记录继续保留，但不标作 dev4 实测。
+2026-09-25 已从公共目录 `C:/Users/Public/Documents/7zpw-restore-evidence-20ffe0e04e504bbc864da9526e4b8ae6` 收到标准账户及跨账户结果，并核对当前 GUI/跨账户脚本、两个 EXE、ZIP、种子清单、原生 EXE 和结果日志的哈希。最终程序的管理员 VHD 记录也已核对，既有验收缺口已收齐，无需重复这些测试。
 
-用户于 2026-09-25 明确将需要人工操作的任务延后至返回后；上述两项不在离开期间启动。命令和接收结果要求见 `restore-return-checklist.md`。不切换账户、不弹出提权操作，也不上传 Defender 样本。
+公开包证据门禁已通过。结论为：在 Windows 11 Insider x64 build 26220 的上述实测范围内，可以准备未签名发布候选；不宣称没有任何 bug、已扫描通过或支持其他系统。Defender 继续为 `not-reviewed`。没有覆盖 v1.5.0 或历史内测产物。
 
-收齐前保持内测候选，不替代 v1.5.0 正式发布。原计划的启动残留提示、清理失败报告及注册表失败 GUI 检查现已实现；当前缺口主要是最终程序的跨会话验收证据。
+原计划的功能实现与本轮验收已完成。准备 `1.6.0-rc1` 未签名 portable 包，复用同哈希已测 EXE，在独立干净检出中重新生成当前文档、清单和构建来源记录；这不等于已经上传 GitHub 或发布正式标签。

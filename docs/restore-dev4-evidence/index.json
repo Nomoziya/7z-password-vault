@@ -2,7 +2,7 @@
   "sourceCommit": "77addbfbdd430db3ff29db76ae8f506039eb450b",
   "candidate": "7z-password-vault-1.6.0-restore-dev4-win64-internal-test.zip",
   "candidateSha256": "4b95dcb15d27a0db61f7cd3372855133f46ff43da8457180777e18ff39b0506b",
-  "note": "Raw evidence copied unchanged. Local GUI is Nomozi, not independent standard-account acceptance. Final dev4 cross-account and administrator VHD checks deferred until the user returns.",
+  "note": "Raw evidence copied unchanged. Final dev4 passed independent standard-account full GUI and upgrade/rollback at 200% DPI, own-account DPAPI with foreign-backup rejection, and administrator full-volume restoration refusal.",
   "records": [
     {
       "file": "clean-build-result.json",
@@ -43,6 +43,36 @@
       "file": "upgrade-rollback-result.json",
       "sha256": "A4FE17F9AD83F80E612F984A2DAE4779C2015FB4071EA31A345AAD2A970EF7F9",
       "original": "tests/b/ui-run-b36bf90f36024868a2f418d3f41468b2/upgrade-rollback-result.json"
+    },
+    {
+      "file": "cross-account-result.json",
+      "sha256": "87222DD9720AA9D477A1C55A7A17294AA94E1A1F62B5A5C25FE40A3BBE245489",
+      "original": "C:\\Users\\Public\\Documents\\7zpw-restore-evidence-20ffe0e04e504bbc864da9526e4b8ae6\\cross-account-result.json"
+    },
+    {
+      "file": "cross-account.log",
+      "sha256": "27BCB46D734A56E04534D472753A302EFB946864A12791FCAB13264F2606A71C",
+      "original": "C:\\Users\\Public\\Documents\\7zpw-restore-evidence-20ffe0e04e504bbc864da9526e4b8ae6\\cross-account.log"
+    },
+    {
+      "file": "real-disk-result.json",
+      "sha256": "A528686A6EA31B8D3A77CF4CEAFA6B62E5A5BF9683B109367C65A3939EE08808",
+      "original": "tests/b/real-disk-1942794ee54c44dcafd10c27ed33cf38/result.json"
+    },
+    {
+      "file": "standard-user-acceptance.json",
+      "sha256": "A95F24AF4B4E454FED9B75CAEEC5C0245EEE421AFE5FFF00AF7E3C9BBFB279B7",
+      "original": "C:\\Users\\Public\\Documents\\7zpw-restore-evidence-20ffe0e04e504bbc864da9526e4b8ae6\\acceptance.json"
+    },
+    {
+      "file": "standard-user-gui-result.json",
+      "sha256": "4EBDBEF28EF3672BF4C4C368CA5FB63D93C92E87D63F1E519B530181706816FA",
+      "original": "C:\\Users\\Public\\Documents\\7zpw-restore-evidence-20ffe0e04e504bbc864da9526e4b8ae6\\result.json"
+    },
+    {
+      "file": "standard-user-upgrade-rollback-result.json",
+      "sha256": "88B676861D148B79B4AD3A3746ADDBE58C3BCD67BE3D3974EC74A6A9DC1B7086",
+      "original": "C:\\Users\\Public\\Documents\\7zpw-restore-evidence-20ffe0e04e504bbc864da9526e4b8ae6\\upgrade-rollback-result.json"
     }
   ]
 }

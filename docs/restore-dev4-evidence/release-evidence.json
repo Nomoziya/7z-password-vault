@@ -1,0 +1,28 @@
+{
+  "upstreamVerified": true,
+  "runtimeInputsVerified": true,
+  "inputLockSha256": "99A9CFED1FDC4F704BAA844709E57B3DAC3287982F25F6F870558860C6C5A891",
+  "sourceArchiveSha256": "41e2a7c0e9f838351c625e01f0f581a2188bb3dda10c8e0b4a852da26546ffe2",
+  "windows11InsiderStandardUser": "passed",
+  "windows11InsiderBuild": "10.0.26220.0",
+  "standardUserAccount": "WW\\cs",
+  "standardUserGui": {
+    "classification": "PASS",
+    "exitCode": 0,
+    "passed": 436,
+    "failed": 0,
+    "evidencePath": "docs/restore-dev4-evidence/standard-user-gui-result.json",
+    "evidenceSha256": "4EBDBEF28EF3672BF4C4C368CA5FB63D93C92E87D63F1E519B530181706816FA",
+    "scriptSha256": "205D29508D6E71539C93CB1279F38E01BEFAC54BB072F9F5BBA696D786521882",
+    "fileManagerSha256": "2908567C6B7088450216FE708848A20E501EA87F6B7483D7E518A21BF0F05CA2",
+    "guiSha256": "839BB203FBAF37E1DB5D6A2EC4CEE8433AFA85826FAA315E82C0D5E9D5B8F62B"
+  },
+  "upgradeRollback": {
+    "result": "passed",
+    "evidencePath": "docs/restore-dev4-evidence/standard-user-upgrade-rollback-result.json",
+    "evidenceSha256": "88B676861D148B79B4AD3A3746ADDBE58C3BCD67BE3D3974EC74A6A9DC1B7086",
+    "fileManagerSha256": "2908567C6B7088450216FE708848A20E501EA87F6B7483D7E518A21BF0F05CA2",
+    "guiSha256": "839BB203FBAF37E1DB5D6A2EC4CEE8433AFA85826FAA315E82C0D5E9D5B8F62B"
+  },
+  "securityScanStatus": "not-reviewed"
+}
